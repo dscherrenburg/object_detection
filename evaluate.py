@@ -1,36 +1,37 @@
 import torch
 from torch.amp import autocast
 import os
-from torchvision.ops import box_iou, generalized_box_iou_loss
+from torchvision.ops import box_iou
 from tqdm import tqdm
-import torch.nn.functional as F
-from sklearn.metrics import average_precision_score
 import numpy as np
 import yaml
 import matplotlib.pyplot as plt
 
-def validation(run_dir, model, dataloader, device):
-    metrics = EvaluationMetrics(run_dir=run_dir, model=model, dataloader=dataloader, device=device)
+def validation(run_dir, model, dataloader, iou_threshold=0.5, create_plots=False):
+    metrics = EvaluationMetrics(run_dir=run_dir, model=model, dataloader=dataloader, iou_threshold=iou_threshold, val_plots=create_plots)
     results = metrics()
     return {key: np.float64(value) for key, value in results.items()}
 
-def test(run_dir, iou_threshold=0.5, create_plots=True):
+def evaluation(run_dir, iou_threshold=0.5, create_plots=True):
     """Evaluates object detection predictions against ground truth labels."""
-    metrics = EvaluationMetrics(run_dir=run_dir, iou_threshold=iou_threshold, create_plots=create_plots)
+    metrics = EvaluationMetrics(run_dir=run_dir, iou_threshold=iou_threshold, test_plots=create_plots)
     results = metrics()
     return {key: np.float64(value) for key, value in results.items()}
     
 
 class EvaluationMetrics:
-    def __init__(self, run_dir, model=None, dataloader=None, create_plots=False, device="cuda", iou_threshold=0.5):
+    def __init__(self, run_dir, model=None, dataloader=None, test_plots=False, val_plots=False, device=None, iou_threshold=0.5):
         self.run_dir = run_dir
         self.model = model
         self.dataloader = dataloader
-        self.create_plots = create_plots
+        self.test_plots = test_plots
+        self.val_plots = val_plots
         self.device = device
         self.iou_threshold = iou_threshold
         if isinstance(self.device, str):
             self.device = torch.device(device)
+        if self.device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.metrics = {key: 0.0 for key in ['precision', 'recall', 'f1', 'mAP50', 'mAP50_95', 'loss']}
 
     def __call__(self):
@@ -44,6 +45,8 @@ class EvaluationMetrics:
             project_dir = os.path.dirname(os.path.dirname(os.path.dirname(self.run_dir)))
             self.data_config_file = os.path.join(project_dir, "dataset_configs", dataset, "dataset.yaml")
         self.get_metrics(use_dataloader)
+        if self.val_plots:
+            self.create_val_plots()
         return self.metrics
 
     def get_metrics(self, use_dataloader=True):
@@ -79,7 +82,10 @@ class EvaluationMetrics:
 
         model.eval()
         with torch.no_grad():
+            num=0
             for images, targets, filenames in dataloader:
+                num+=1
+                print(num)
                 images = [img.to(self.device) for img in images]
                 with autocast(self.device.type):
                     predictions = model(images)
@@ -93,14 +99,20 @@ class EvaluationMetrics:
 
                     all_predictions.append([(int(label), box, score) for label, box, score in zip(pred_labels, pred_boxes, pred_scores)])
                     all_ground_truths.append([(int(label), box) for label, box in zip(gt_labels, gt_boxes)])
+                
 
-        nc = dataloader.dataset.get_num_classes()
+        nc = dataloader.dataset.nc
         self.compute_metrics(all_predictions, all_ground_truths, iou_thresholds, nc)
 
     def compute_metrics_from_files(self, pred_dir, data_config_file, iou_thresholds=[0.5]):
         """
         Compute precision, recall, F1-score, mAP50, and mAP50_95 given prediction directory and data_config_file.
         """
+        if not os.path.exists(pred_dir):
+            raise FileNotFoundError(f"Predictions directory {pred_dir} not found.")
+        if not os.path.exists(data_config_file):
+            raise FileNotFoundError(f"Data config file {data_config_file} not found.")
+        
         data_config = yaml.safe_load(open(data_config_file))
         nc = data_config["nc"]
         test_txt = os.path.join(data_config["path"], data_config["test"])
@@ -142,7 +154,7 @@ class EvaluationMetrics:
         """
         ap_per_threshold = []
         
-        progress_bar = tqdm(iou_thresholds, desc="    Evaluating:", leave=False)
+        progress_bar = tqdm(iou_thresholds, desc="    Evaluating", leave=False)
         for iou_thresh in progress_bar:
             ap_per_class = []
 
@@ -155,7 +167,7 @@ class EvaluationMetrics:
 
             ap_per_threshold.append(np.mean(ap_per_class))
         
-        self.loss = self.bbox_loss(predictions, ground_truths).item()
+        self.loss = self.bbox_loss(predictions, ground_truths)
         self.mAP50 = ap_per_threshold[0]
         self.mAP50_95 = np.mean(ap_per_threshold)
 
@@ -179,8 +191,8 @@ class EvaluationMetrics:
         precisions = np.array(precisions)
         recalls = np.array(recalls)
 
-        if iou_threshold==self.iou_threshold and (create_plots or self.create_plots):
-            self.create_result_figures(precisions, recalls, confidence_thresholds, iou_threshold=iou_threshold)
+        if iou_threshold==self.iou_threshold and (create_plots or self.test_plots):
+            self.create_test_plots(precisions, recalls, confidence_thresholds, iou_threshold=iou_threshold)
         
         # Sort by recall
         sorted_indices = np.argsort(recalls)
@@ -280,11 +292,11 @@ class EvaluationMetrics:
             pl, pb, ps = zip(*preds[i]) if preds[i] else ([], [], [])
             gl, gb = zip(*gts[i]) if gts[i] else ([], [])
 
-            pb = torch.tensor(pb, dtype=torch.float32) if pb else torch.empty((0, 4))
+            pb = torch.tensor(np.array(pb), dtype=torch.float32) if pb else torch.empty((0, 4))
             ps = torch.tensor(ps, dtype=torch.float32) if ps else torch.empty((0,))
             pl = torch.tensor(pl, dtype=torch.int64) if pl else torch.empty((0,), dtype=torch.int64)
 
-            gb = torch.tensor(gb, dtype=torch.float32) if gb else torch.empty((0, 4))
+            gb = torch.tensor(np.array(gb), dtype=torch.float32) if gb else torch.empty((0, 4))
             gl = torch.tensor(gl, dtype=torch.int64) if gl else torch.empty((0,), dtype=torch.int64)
 
             loss_per_class = 0.0
@@ -319,9 +331,9 @@ class EvaluationMetrics:
 
             total_loss += loss_per_class
 
-        return total_loss / batch_size if batch_size > 0 else torch.tensor(0.0)
+        return total_loss / batch_size if batch_size > 0 else 0.0
     
-    def create_result_figures(self, precisions, recalls, confidence_thresholds, iou_threshold=0.5):
+    def create_test_plots(self, precisions, recalls, confidence_thresholds, iou_threshold=0.5):
         """
         Create precision-recall curve given predictions and ground truths.
         """
@@ -387,6 +399,7 @@ class EvaluationMetrics:
             plt.colorbar()
             plt.savefig(conf_matrix_path)
         
+    def create_val_plots(self):
         # Epoch results
         epoch_results = os.path.join(self.run_dir, 'results.csv')
         epoch_results_path = os.path.join(self.run_dir, 'results.png')

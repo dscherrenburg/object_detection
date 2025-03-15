@@ -1,17 +1,18 @@
 import os
 import torch
 import cv2
-import numpy as np
-from torch.utils.data import Dataset
-from torchvision import transforms
+import yaml
 
 class CustomDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset_yaml, split="train", transform=None):
-        self.dataset_yaml = dataset_yaml
+    def __init__(self, dataset_yaml_file, split="train", transform=None):
+        dataset_yaml = yaml.safe_load(open(dataset_yaml_file, "r"))
         self.transform = transform
         self.image_paths = self.load_image_paths(dataset_yaml, split)
         self.label_paths = [p.replace("images", "labels").replace(".png", ".txt") for p in self.image_paths]
-        self.num_classes = self.get_num_classes()
+        self.nc = dataset_yaml["nc"]
+        self.img_size = self.get_img_size()
+        self.__getitem__(0)  # Load first image to get image size
+
 
     def __len__(self):
         return len(self.image_paths)
@@ -24,7 +25,6 @@ class CustomDataset(torch.utils.data.Dataset):
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = torch.tensor(image / 255.0, dtype=torch.float32).permute(2, 0, 1)  # Normalize & format
-        self.img_size = (image.shape[2], image.shape[1])
 
         # Load labels if they exist
         if os.path.exists(label_path) and os.path.getsize(label_path) > 0:
@@ -40,6 +40,8 @@ class CustomDataset(torch.utils.data.Dataset):
 
         if self.transform:
             image, target = self.transform(image, target)
+        
+        self.img_size = (image.shape[2], image.shape[1])
 
         return image, target, os.path.basename(img_path)
     
@@ -60,6 +62,10 @@ class CustomDataset(torch.utils.data.Dataset):
                 labels.append(int(class_id) + 1)  # Ensure labels are > 0 (Faster R-CNN requires class IDs to start from 1)
 
         return torch.tensor(boxes, dtype=torch.float32), torch.tensor(labels, dtype=torch.int64)
+    
+    def get_img_size(self):
+        image = cv2.imread(self.image_paths[0])
+        return image.shape[1], image.shape[0]
 
     def yolo_to_pascal(self, x, y, w, h):
         """Convert YOLO format (fractions) to Pascal VOC format (absolute pixel values)."""
@@ -76,9 +82,6 @@ class CustomDataset(torch.utils.data.Dataset):
         w = (xmax - xmin) / self.img_size[0]
         h = (ymax - ymin) / self.img_size[1]
         return x, y, w, h
-    
-    def get_num_classes(self):
-        return len(self.dataset_yaml["names"]) + 1  # Add background class
 
     @staticmethod
     def collate_fn(batch):
