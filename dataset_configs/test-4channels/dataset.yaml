@@ -1,0 +1,7 @@
+path: /home/daan/object_detection/dataset_configs/test-4channels
+train: train.txt
+val: val.txt
+test: test.txt
+
+nc: 1  # number of classes
+names: ['dock']  # list of class names

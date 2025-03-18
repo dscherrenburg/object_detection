@@ -10,7 +10,7 @@ from evaluate import evaluation
 
 def save_metrics_to_csv(model, run_name, metrics, csv_path):
     """Saves the evaluation metrics to a CSV file."""
-    fieldnames = ['model', 'data', 'epochs', 'batch_size'] + list(metrics.keys())
+    fieldnames = ['model', 'data', 'epochs', 'batch size', 'best epoch'] + list(metrics.keys())
     if not os.path.exists(csv_path):
         with open(csv_path, 'w') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -24,7 +24,7 @@ def save_metrics_to_csv(model, run_name, metrics, csv_path):
         with open(run_csv, 'r') as f:
             epochs = int(f.readlines()[-1].split(",")[0])
     
-    batch_size = run_name.split("_")[1][2:]
+    batch_size = run_name.split("_")[2][2:]
     data = run_name.split(":")[-1]
 
     with open(csv_path, 'a') as f:
@@ -33,7 +33,8 @@ def save_metrics_to_csv(model, run_name, metrics, csv_path):
             'model': model,
             'data': data,
             'epochs': epochs,
-            'batch_size': batch_size,
+            'batch size': batch_size,
+            'best epoch': '',
             **metrics
         })
 
@@ -41,7 +42,7 @@ def save_metrics_to_csv(model, run_name, metrics, csv_path):
 def main(project_folder, model, data_name, epochs, patience, imgsz, train, resume, predict, test):
     if model.startswith("YOLO"):
         if model =="YOLO":
-            model = "YOLO11n"
+            model = "YOLO11s"
         batch_size = 8
         run_name = f"m:{model}_e:{epochs}_b:{batch_size}_d:{data_name}"
         if train:
@@ -64,7 +65,7 @@ def main(project_folder, model, data_name, epochs, patience, imgsz, train, resum
 
     elif model == "Faster_RCNN":
         batch_size = 2
-        run_name = f"e:{epochs}_b:{batch_size}_d:{data_name}"
+        run_name = f"m:FRCNN_e:{epochs}_b:{batch_size}_d:{data_name}"
         if train:
             trainer = FasterRCNNTrainer(project_folder=project_folder,
                                         data_name=data_name,
@@ -104,15 +105,17 @@ if __name__ == "__main__":
     project_folder = "/home/daan/object_detection/"
     model = "YOLO11n"                                          # 'YOLO[version]' or 'Faster_RCNN'
     # model = "Faster_RCNN"
-    data_name = "split-1"                       # Must be a a dataset in the project_folder/dataset_configs folder
-    epochs = 300
-    patience = epochs // 2
+    data_name = "test-3channels"                       # Must be a a dataset in the project_folder/dataset_configs folder
+    epochs = 100
+    patience = epochs // 5
     # patience = epochs
     imgsz = 640
     train = False
-    resume = False
+    resume = True
     predict = True
     test = True
 
+
+    # Latest changes: single_cls=True, half=True (faster)
 
     main(project_folder, model, data_name, epochs, patience, imgsz, train, resume, predict, test)

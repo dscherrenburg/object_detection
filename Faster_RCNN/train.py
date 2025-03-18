@@ -76,12 +76,12 @@ class FasterRCNNTrainer:
 
             val_print = f"{' ' * 6}{' ' * (2 * len(str(self.epochs)) + 3)}"
             val_print += f"Train - loss: {train_loss:.4f}, lr: {lr:.2e}  ||    "
-            val_print += f"Validation - loss: {val_metrics['loss']:.4f}, mAP: {val_metrics['mAP50_95']:.4f}"
+            val_print += f"Validation - loss: {val_metrics['loss']:.4f}, mAP: {val_metrics['mAP50-95']:.4f}"
 
             self.lr_scheduler.step(val_metrics["loss"])
 
             # Save best model
-            fitness = 0.1 * val_metrics["mAP50"] + 0.9 * val_metrics["mAP50_95"]
+            fitness = 0.1 * val_metrics["mAP50"] + 0.9 * val_metrics["mAP50-95"]
             if fitness > best_fitness:
                 best_fitness = fitness
                 epochs_no_improve = 0
@@ -147,7 +147,7 @@ class FasterRCNNTrainer:
             else:
                 print("No checkpoint found.")
 
-        results = pd.DataFrame(columns=["epoch", "time", "train_loss", "precision", "recall", "f1", "mAP50", "mAP50_95", "val_loss", "lr"])
+        results = pd.DataFrame(columns=["epoch", "time", "train_loss", "precision", "recall", "f1", "mAP50", "mAP50-95", "val_loss", "lr"])
         results.to_csv(self.results_file, index=False)
         self.total_time = 0
         self.last_epoch = 0

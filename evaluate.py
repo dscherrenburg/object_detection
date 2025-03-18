@@ -32,7 +32,7 @@ class EvaluationMetrics:
             self.device = torch.device(device)
         if self.device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.metrics = {key: 0.0 for key in ['precision', 'recall', 'f1', 'mAP50', 'mAP50_95', 'loss']}
+        self.metrics = {key: 0.0 for key in ['precision', 'recall', 'f1', 'mAP50', 'mAP50-95', 'loss']}
 
     def __call__(self):
         torch.cuda.empty_cache()
@@ -69,13 +69,13 @@ class EvaluationMetrics:
             'recall': self.recall,
             'f1': self.f1,
             'mAP50': self.mAP50,
-            'mAP50_95': self.mAP50_95,
+            'mAP50-95': self.mAP50_95,
             'loss': self.loss
         })
 
     def compute_metrics_from_dataloader(self, model, dataloader, iou_thresholds=[0.5]):
         """
-        Compute precision, recall, F1-score, mAP50, and mAP50_95 given a dataloader and model.
+        Compute precision, recall, F1-score, mAP50, and mAP50-95 given a dataloader and model.
         """
         all_predictions = []
         all_ground_truths = []
@@ -106,7 +106,7 @@ class EvaluationMetrics:
 
     def compute_metrics_from_files(self, pred_dir, data_config_file, iou_thresholds=[0.5]):
         """
-        Compute precision, recall, F1-score, mAP50, and mAP50_95 given prediction directory and data_config_file.
+        Compute precision, recall, F1-score, mAP50, and mAP50-95 given prediction directory and data_config_file.
         """
         if not os.path.exists(pred_dir):
             raise FileNotFoundError(f"Predictions directory {pred_dir} not found.")
@@ -150,7 +150,7 @@ class EvaluationMetrics:
 
     def compute_metrics(self, predictions, ground_truths, iou_thresholds=[0.5], num_classes=1):
         """
-        Compute precision, recall, F1-score, mAP50, and mAP50_95 given predictions and ground truths.
+        Compute precision, recall, F1-score, mAP50, and mAP50-95 given predictions and ground truths.
         """
         ap_per_threshold = []
         
@@ -205,7 +205,6 @@ class EvaluationMetrics:
                 
         # Compute AP as the area under the precision-recall curve
         ap = np.sum((recalls[1:] - recalls[:-1]) * precisions[1:])
-        
         return ap
     
     def compute_precision_recall(self, predictions, ground_truths, confidence_threshold=0.5, iou_threshold=0.5):
@@ -400,7 +399,6 @@ class EvaluationMetrics:
             plt.savefig(conf_matrix_path)
         
     def create_val_plots(self):
-        # Epoch results
         epoch_results = os.path.join(self.run_dir, 'results.csv')
         epoch_results_path = os.path.join(self.run_dir, 'results.png')
         if not os.path.exists(epoch_results_path) and os.path.exists(epoch_results):
@@ -408,20 +406,47 @@ class EvaluationMetrics:
             header = list(np.genfromtxt(epoch_results, delimiter=',', max_rows=1, dtype=str))
             results = np.genfromtxt(epoch_results, delimiter=',', skip_header=1)
             epochs = results[:, 0]
-            f, ax = plt.subplots(2, 3, figsize=(20, 10))
-            ax[0, 0].plot(epochs, results[:, header.index('train_loss')])
-            ax[0, 0].set_title('Train Loss')
-            ax[1, 0].plot(epochs, results[:, header.index('val_loss')])
-            ax[1, 0].set_title('Validation Loss')
-            ax[0, 1].plot(epochs, results[:, header.index('precision')])
-            ax[0, 1].set_title('Precision')
-            ax[0, 2].plot(epochs, results[:, header.index('recall')])
-            ax[0, 2].set_title('Recall')
-            ax[1, 1].plot(epochs, results[:, header.index('mAP50')])
-            ax[1, 1].set_title('mAP50')
-            ax[1, 2].plot(epochs, results[:, header.index('mAP50_95')])
-            ax[1, 2].set_title('mAP50_95')
-            plt.savefig(epoch_results_path)
+            if 'train_loss' in header:
+                f, ax = plt.subplots(2, 3, figsize=(20, 10))
+                ax[0, 0].plot(epochs, results[:, header.index('train_loss')])
+                ax[0, 0].set_title('Train Loss')
+                ax[1, 0].plot(epochs, results[:, header.index('val_loss')])
+                ax[1, 0].set_title('Validation Loss')
+                ax[0, 1].plot(epochs, results[:, header.index('precision')])
+                ax[0, 1].set_title('Precision')
+                ax[0, 2].plot(epochs, results[:, header.index('recall')])
+                ax[0, 2].set_title('Recall')
+                ax[1, 1].plot(epochs, results[:, header.index('mAP50')])
+                ax[1, 1].set_title('mAP50')
+                ax[1, 2].plot(epochs, results[:, header.index('mAP50-95')])
+                ax[1, 2].set_title('mAP50-95')
+                plt.savefig(epoch_results_path)
+            elif 'train/box_loss' in header:
+                f, ax = plt.subplots(2, 5, figsize=(20, 10))
+                ax[0, 0].plot(epochs, results[:, header.index('train/box_loss')])
+                ax[0, 0].set_title('train/box_loss')
+                ax[1, 0].plot(epochs, results[:, header.index('val/box_loss')])
+                ax[1, 0].set_title('val/box_loss')
+                ax[0, 1].plot(epochs, results[:, header.index('train/cls_loss')])
+                ax[0, 1].set_title('train/cls_loss')
+                ax[1, 1].plot(epochs, results[:, header.index('val/cls_loss')])
+                ax[1, 1].set_title('val/cls_loss')
+                ax[0, 2].plot(epochs, results[:, header.index('train/dfl_loss')])
+                ax[0, 2].set_title('train/dfl_loss')
+                ax[1, 2].plot(epochs, results[:, header.index('val/dfl_loss')])
+                ax[1, 2].set_title('val/dfl_loss')
+                ax[0, 3].plot(epochs, results[:, header.index('metrics/precision(B)')])
+                ax[0, 3].set_title('metrics/precision(B)')
+                ax[0, 4].plot(epochs, results[:, header.index('metrics/recall(B)')])
+                ax[0, 4].set_title('metrics/recall(B)')
+                ax[1, 3].plot(epochs, results[:, header.index('metrics/mAP50(B)')])
+                ax[1, 3].set_title('metrics/mAP50(B)')
+                ax[1, 4].plot(epochs, results[:, header.index('metrics/mAP50-95(B)')])
+                ax[1, 4].set_title('metrics/mAP50-95(B)')
+                plt.savefig(epoch_results_path)
+        else:
+            print("results.png already exists or results.csv not found at", epoch_results)
+
             
 
     
@@ -442,3 +467,7 @@ def yolo_to_pascal(x, y, w, h, img_w=1, img_h=1):
     ymax = (y + h / 2) * img_h
     return xmin, ymin, xmax, ymax
 
+
+if __name__ == "__main__":
+    run_dir = "/home/daan/object_detection/YOLO/runs/m:YOLO11s_e:300_b:8_d:split-1"
+    EvaluationMetrics(run_dir=run_dir).create_val_plots()

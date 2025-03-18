@@ -25,7 +25,7 @@ def generate_video_from_images(image_folder, output_video, fps=30):
 
 if __name__ == "__main__":
     model = "YOLO"
-    image_folder = f"/home/daan/object_detection/{model}/runs/e:100_b:8_data:split_1/predict"
+    image_folder = f"/home/daan/object_detection/{model}/runs/m:YOLO11n_e:300_b:8_d:split-1/predict"
     output_dir = "/home/daan/object_detection/results/"
-    output_video = f"{model}-e:100_b:8_data:split_1.mp4"
+    output_video = f"m:YOLO11n_e:300_b:8_data:split_1.mp4"
     generate_video_from_images(image_folder, output_dir+output_video)

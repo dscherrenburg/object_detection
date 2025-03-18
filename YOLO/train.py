@@ -4,11 +4,11 @@ from ultralytics import YOLO
 from itertools import islice
 
 class YOLOTrainer:
-    def __init__(self, project_folder, model_name, data_name, epochs=50, patience=10, batch_size=8, imgsz=640, resume=True):
+    def __init__(self, project_folder, model_name, data_name, epochs=50, patience=10, batch_size=8, imgsz=640, resume=True, single_cls=True):
         print("\n--- Training YOLO ---\n")
         self.project_folder, self.model_name, self.data_name = project_folder, model_name, data_name
         self.epochs, self.patience, self.batch_size, self.imgsz = epochs, patience, batch_size, imgsz
-        self.resume = resume
+        self.resume, self.single_cls = resume, single_cls
         self.data_config_folder = os.path.join(project_folder, "dataset_configs")
         self.runs_dir = os.path.join(project_folder, "YOLO", "runs")
         self.run_name = f"m:{model_name}_e:{epochs}_b:{batch_size}_d:{data_name}"
@@ -21,7 +21,7 @@ class YOLOTrainer:
                 epochs=self.epochs - last_epoch,
                 batch=self.batch_size, imgsz=self.imgsz, device=[0],
                 project=self.runs_dir, name=self.run_name, resume=self.resume, patience=self.patience,
-                verbose=True
+                verbose=True, single_cls=self.single_cls, half=True
             )
         except KeyboardInterrupt:
             print("\nTraining interrupted! Saving progress...")
