@@ -56,15 +56,16 @@ if __name__ == "__main__":
                 ["rosbag2_2024_09_17-17_04_31"],
                 ["rosbag2_2024_09_17-17_13_13"],
                 ["rosbag2_2024_09_17-18_54_49"],
-                ["rosbag2_2024_09_17-14_40_19", "rosbag2_2024_09_17-14_48_48", "rosbag2_2024_09_17-14_58_53", "rosbag2_2024_09_17-20_27_46"]]
-    test_folders = ["rosbag2_2024_09_17-16_02_29", "rosbag2_2024_09_17-19_47_16"]
-    interval = 10
+                ["rosbag2_2024_09_17-16_02_29", "rosbag2_2024_09_17-19_47_16"]]
+    test_folders = ["rosbag2_2024_09_17-14_40_19", "rosbag2_2024_09_17-14_48_48", "rosbag2_2024_09_17-14_58_53", "rosbag2_2024_09_17-20_27_46"]
+    interval = 1
     #############################
 
     for i, val_folders in enumerate(val_sets):
-        name = f"split_{i+1}_interval_{interval}" if interval > 1 else f"split_{i+1}"
+        name = f"split-{i+1}+interval-{interval}(2)" if interval > 1 else f"split-{i+1}(2)"
         val_folders = set(val_folders) & set(valid_folders)
         test_folders = set(test_folders) & set(valid_folders)
         train_folders = set(valid_folders) - val_folders - test_folders
 
         create_dataset_config(list(train_folders), list(val_folders), list(test_folders), name, interval=interval)
+        exit()

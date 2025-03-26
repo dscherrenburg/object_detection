@@ -5,3 +5,5 @@ test: test.txt
 
 nc: 1  # number of classes
 names: ['dock']  # list of class names
+
+ch: 4  # number of channels
