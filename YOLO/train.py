@@ -2,6 +2,9 @@ import os
 import shutil
 from ultralytics import YOLO
 from itertools import islice
+from torch import nn
+import torch
+import math
 
 class YOLOTrainer:
     def __init__(self, project_folder, model_name, data_name, epochs=50, patience=10, batch_size=8, imgsz=640, resume=True, single_cls=True):
@@ -16,12 +19,13 @@ class YOLOTrainer:
     def train(self):
         old_run_name, model_path, last_epoch = self._get_resume_info()
         try:
-            YOLO(model_path).train(
+            yolo = YOLO(model_path)
+            yolo.train(
                 data=os.path.join(self.data_config_folder, self.data_name, "dataset.yaml"),
-                epochs=self.epochs - last_epoch,
+                epochs=self.epochs - last_epoch, resume=self.resume,
                 batch=self.batch_size, imgsz=self.imgsz, device=[0],
-                project=self.runs_dir, name=self.run_name, resume=self.resume, patience=self.patience,
-                verbose=True, single_cls=self.single_cls, half=True
+                project=self.runs_dir, name=self.run_name, patience=self.patience,
+                verbose=True, single_cls=self.single_cls, half=True, max_det=10,
             )
         except KeyboardInterrupt:
             print("\nTraining interrupted! Saving progress...")
@@ -43,14 +47,23 @@ class YOLOTrainer:
         self.model_path = os.path.join(self.project_folder, "YOLO", "models", self.model_name.lower() + ".pt")
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"Model {self.model_name} not found.")
+        
+        self.run_dir = os.path.join(self.runs_dir, self.run_name)
 
         # Check if we should resume training
         if not self.resume:
-            print("Starting fresh.")
+            if os.path.exists(self.run_dir):
+                inpt = input(f"Run {self.run_name} already exists. Press Enter to overwrite it or type 'new' to start a new run.\n")
+                if inpt.lower() == "new":
+                    print("Creating a new run.")
+                else:
+                    shutil.rmtree(self.run_dir)
+                    print("Overwriting existing run.")
+            else:
+                print("Starting fresh.")
             return None, self.model_path, 0
         
         # Check if the run already exists
-        self.run_dir = os.path.join(self.runs_dir, self.run_name)
         if os.path.exists(self.run_dir):
             last_weights = os.path.join(self.run_dir, "weights", "last.pt")
             if os.path.exists(last_weights):
@@ -58,6 +71,7 @@ class YOLOTrainer:
                 return None, last_weights, 0
             else:
                 print("No checkpoint found. Starting fresh.")
+                shutil.rmtree(self.run_dir)
                 self.resume = False
                 return None, self.model_path, 0
             

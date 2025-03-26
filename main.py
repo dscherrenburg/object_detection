@@ -105,17 +105,16 @@ if __name__ == "__main__":
     project_folder = "/home/daan/object_detection/"
     model = "YOLO11n"                                          # 'YOLO[version]' or 'Faster_RCNN'
     # model = "Faster_RCNN"
-    data_name = "test-3channels"                       # Must be a a dataset in the project_folder/dataset_configs folder
-    epochs = 100
-    patience = epochs // 5
-    # patience = epochs
+    data_name = "split-1(2)"                       # Must be a a dataset in the project_folder/dataset_configs folder
+    epochs = 600
+    patience = epochs // 2
     imgsz = 640
-    train = False
-    resume = True
+    train = True
+    resume = False
     predict = True
     test = True
 
 
-    # Latest changes: single_cls=True, half=True (faster)
+    # Latest changes: single_cls=True, half=True (faster), max_det=10
 
     main(project_folder, model, data_name, epochs, patience, imgsz, train, resume, predict, test)
