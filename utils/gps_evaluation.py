@@ -1,234 +1,336 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from rosbags.rosbag2 import Reader
-from rosbags.typesys import get_typestore, Stores
 from scipy.stats import binned_statistic
+from sklearn.metrics.pairwise import haversine_distances
 
-from cv_bridge import CvBridge
 import pandas as pd
-from datetime import datetime
 
 class GPS_Evaluation:
-    def __init__(self, rosbag, label_folder, dock_coordinates):
+    def __init__(self, data_folder, prediction_folder, rosbags, dock_coordinates):
         """
         Initializes the GPS_Evaluation class.
         
         Parameters:
-        - rosbag_path: Path to the rosbag file containing GPS data.
-        - label_folder: Folder path containing prediction confidence txt files (timestamp-based).
+        - data_folder: Folder containing images, labels and gps_coords folders.
+        - prediction_folder: Folder containing the predictions.
+        - rosbags: List of rosbag names to evaluate.
         - dock_coordinates: Tuple of (latitude, longitude) representing the dock's location.
         """
-        self.rosbag = rosbag
-        self.label_folder = label_folder
+        self.data_folder = data_folder
+        self.prediction_folder = prediction_folder
+        self.rosbags = rosbags if isinstance(rosbags, list) else [rosbags]
         self.dock_coordinates = dock_coordinates
-        self.gps_data = []
-        self.confidences = []
-        self.timestamps = []
-        self.distances = []
+    
+    def extract_data(self):
+        self.predictions = []
+        self.labels = []
+        self.gps_coords = []
 
-    def extract_gps_data(self, topic):
-        """Extract GPS data from the given rosbag topic."""
-        typestore = get_typestore(Stores.ROS2_FOXY)
-        self.gps_data = []
-        self.first_timestamp, self.last_timestamp = None, None
+        # Extract labels
+        for rosbag in self.rosbags:
+            labels_folder = os.path.join(self.data_folder, 'labels', rosbag)
+            for file in os.listdir(labels_folder):
+                name_split = file.split('.')
+                if name_split[-1] == 'txt' and name_split[0].isdigit():
+                    timestamp = int(name_split[0])
+                    with open(os.path.join(labels_folder, file), 'r') as f:
+                        labels = []
+                        for line in f.readlines():
+                            line = line.strip().split()
+                            labels.append((int(line[0]), list(map(float, line[1:5]))))
+                        self.labels.append((timestamp, labels))
+        self.labels = sorted(self.labels, key=lambda x: x[0])
+        print(f"Extracted {len(self.labels)} labels.")
 
-        with Reader(self.rosbag) as reader:
-            for connection, timestamp, rawdata in reader.messages():
-                if self.first_timestamp is None:
-                    self.first_timestamp = timestamp
-                self.last_timestamp = timestamp
-
-                if connection.topic == topic:
-                    msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
-                    self.gps_data.append((timestamp, msg.latitude, msg.longitude))
-
-        print(f"Extracted {len(self.gps_data)} GPS data points from {len(self.rosbag)} rosbags.")
-
-    def extract_confidences(self):
-        """Extract object detection confidence from txt files in the label folder."""
-        label_files = sorted(os.listdir(self.label_folder))
-        for label_file in label_files:
-            if label_file.endswith('.txt'):
-                timestamp = int(label_file.split('.')[0])
-                if timestamp < self.first_timestamp or timestamp > self.last_timestamp:
+        # Extract predictions
+        timestamps = [label[0] for label in self.labels]
+        for file in os.listdir(self.prediction_folder):
+            name_split = file.split('.')
+            if name_split[-1] == 'txt' and name_split[0].isdigit():
+                timestamp = int(name_split[0])
+                # print(timestamp)
+                if timestamp not in timestamps:
                     continue
-                with open(os.path.join(self.label_folder, label_file), 'r') as f:
-                    confidence = max([float(line.strip().split()[-1]) for line in f.readlines()])  # Assuming highest confidence
-                    self.confidences.append((timestamp, confidence))
-                    self.timestamps.append(timestamp)
-
-        print(f"Extracted {len(self.confidences)} confidence values from {len(label_files)} label files.")
-
-    def interpolate_gps_data(self):
-        """Interpolate missing GPS data points."""
-        gps_data = sorted(self.gps_data, key=lambda x: x[0])
-        self.timestamps = list(set(self.timestamps))
-        self.gps_data = []
-        for timestamp in self.timestamps:
-            previous_gps_data = None
-            next_gps_data = None
-            for gps_point in gps_data:
-                if gps_point[0] == timestamp:
-                    self.gps_data.append(gps_point)
-                    break
-                elif gps_point[0] < timestamp:
-                    previous_gps_data = gps_point
-                elif gps_point[0] > timestamp:
-                    next_gps_data = gps_point
-                    break
-            
-            if previous_gps_data and next_gps_data:
-                previous_time, previous_lat, previous_lon = previous_gps_data
-                next_time, next_lat, next_lon = next_gps_data
-                time_diff = next_time - previous_time
-                lat_diff = next_lat - previous_lat
-                lon_diff = next_lon - previous_lon
-                time_ratio = (timestamp - previous_time) / time_diff
-                lat = previous_lat + lat_diff * time_ratio
-                lon = previous_lon + lon_diff * time_ratio
-                self.gps_data.append((timestamp, lat, lon))
-            elif previous_gps_data and not next_gps_data:
-                self.gps_data.append(previous_gps_data)
-            elif not previous_gps_data and next_gps_data:
-                self.gps_data.append(next_gps_data)
-            
-        print(f"Interpolated missing GPS data points. Total: {len(self.gps_data)}")
+                with open(os.path.join(self.prediction_folder, file), 'r') as f:
+                    preds = []
+                    for line in f.readlines():
+                        line = line.strip().split()
+                        preds.append((int(line[0]), list(map(float, line[1:5])), float(line[5])))
+                    self.predictions.append((timestamp, preds))
+        # Add empty predictions for missing timestamps
+        pred_timestamps = [p[0] for p in self.predictions] 
+        for timestamp in timestamps:
+            if timestamp not in pred_timestamps:
+                self.predictions.append((timestamp, []))
+        self.predictions = sorted(self.predictions, key=lambda x: x[0])
+        print(f"Extracted {len(self.predictions)} predictions.")
+        
+        # Extract GPS coordinates
+        for rosbag in self.rosbags:
+            with open(os.path.join(self.data_folder, 'gps_coords', f"{rosbag}.txt"), 'r') as f:
+                for line in f.readlines():
+                    line = line.strip().split()
+                    self.gps_coords.append((int(line[0]), float(line[1]), float(line[2])))
+        self.gps_coords = sorted(self.gps_coords, key=lambda x: x[0])
+        print(f"Extracted {len(self.gps_coords)} GPS coordinates.")
+        
+        if len(self.predictions) == 0:
+            raise ValueError("No predictions found in the prediction folder.")
+        if len(self.labels) == 0:
+            raise ValueError("No labels found in the labels folder.")
+        if len(self.gps_coords) == 0:
+            raise ValueError("No GPS coordinates found in the gps_coords folder.")
+        if len(self.predictions) != len(self.labels) or len(self.predictions) != len(self.gps_coords):
+            raise ValueError("Number of predictions, labels and GPS coordinates do not match.")
+        if self.predictions[0][0] != self.labels[0][0] or self.predictions[0][0] != self.gps_coords[0][0]:
+            print(self.predictions[0][0], self.labels[0][0], self.gps_coords[0][0])
+            raise ValueError("Timestamps of predictions, labels and GPS coordinates do not match.")
+        print(f"Extracted {len(self.predictions)} predictions, labels and GPS coordinates.")
 
     def calculate_distances(self):
-        """Calculate the Euclidean distance between GPS points and the dock location."""
         dock_lat, dock_lon = self.dock_coordinates
-        for timestamp, lat, lon in self.gps_data:
+        self.distances = []
+        for stamp, lat, lon in self.gps_coords:
             # Simple Haversine distance calculation (in meters)
             lat1, lon1 = np.radians(dock_lat), np.radians(dock_lon)
             lat2, lon2 = np.radians(lat), np.radians(lon)
-            dlat = lat2 - lat1
-            dlon = lon2 - lon1
-            a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
-            c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
-            radius = 6371000  # Earth radius in meters
-            distance = radius * c
-            self.distances.append((timestamp, distance))
-
+            distance = haversine_distances([[lat1, lon1], [lat2, lon2]])[0][1] * 6371000
+            self.distances.append((stamp, distance))
+        self.distances = np.array(self.distances)
         print(f"Calculated {len(self.distances)} distances from dock location.")
 
-    def plot_gps_vs_dock(self):
-        """Plot GPS locations and color them based on confidence."""
-        gps_df = pd.DataFrame(self.gps_data, columns=["timestamp", "latitude", "longitude"])
-        gps_df['confidence'] = [c[1] for c in self.confidences]  # Assuming confidence list is ordered by timestamp
+    def iou(self, box1, box2):
+        """Calculate the Intersection over Union (IoU) of two bounding boxes.
+            box: (x_center, y_center, width, height)
+        """
+        if len(box1) != 4 or len(box2) != 4:
+            return 0
+        x1, y1, w1, h1 = box1
+        x2, y2, w2, h2 = box2
+        x1, y1, x1b, y1b = x1 - w1 / 2, y1 - h1 / 2, x1 + w1 / 2, y1 + h1 / 2
+        x2, y2, x2b, y2b = x2 - w2 / 2, y2 - h2 / 2, x2 + w2 / 2, y2 + h2 / 2
 
-        # Create a scatter plot of GPS locations, colored by confidence
-        plt.figure(figsize=(10, 6))
-        scatter = plt.scatter(gps_df['longitude'], gps_df['latitude'], c=gps_df['confidence'], cmap='viridis')
-        plt.colorbar(scatter, label='Confidence')
-        plt.scatter(self.dock_coordinates[1], self.dock_coordinates[0], color='red', marker='x', label="Dock Location")
-        plt.xlabel('Longitude')
-        plt.ylabel('Latitude')
-        plt.title('GPS Locations vs Dock Location')
-        plt.legend()
-        plt.show()
+        # Get the coordinates of the intersection rectangle
+        xA = max(x1, x2)
+        yA = max(y1, y2)
+        xB = min(x1b, x2b)
+        yB = min(y1b, y2b)
 
-    # def plot_confidence_vs_distance(self):
-    #     """Plot confidence vs distance with trend line and standard deviation shading."""
-    #     distance_df = pd.DataFrame(self.distances, columns=["timestamp", "distance"])
-    #     confidence_df = pd.DataFrame(self.confidences, columns=["timestamp", "confidence"])
+        # Calculate intersection area
+        intersection = max(0, xB - xA + 1) * max(0, yB - yA + 1)
 
-    #     # Merge the two DataFrames based on timestamp
-    #     merged_df = pd.merge(distance_df, confidence_df, on="timestamp", how="inner")
-    #     distances = merged_df['distance'].to_numpy()
-    #     confidences = merged_df['confidence'].to_numpy()
+        # Calculate union area
+        box1_area = (w1 + 1) * (h1 + 1)
+        box2_area = (w2 + 1) * (h2 + 1)
+        union = box1_area + box2_area - intersection
 
-    #     # Scatter plot with color gradient
-    #     plt.figure(figsize=(10, 6))
-    #     scatter = plt.scatter(distances, confidences, c=confidences, cmap='viridis', alpha=0.7, edgecolors='k', s=confidences * 50)
+        # Calculate the Intersection over Union (IoU)
+        iou = intersection / union if union > 0 else 0
+        return iou
+    
+    def compute_ap(self, precisions, recalls):
+        """Compute the average precision, given the precision and recall values."""
+        recalls = np.concatenate([[0], np.array(recalls), [1]])
+        precisions = np.concatenate([[0], np.array(precisions), [0]])
+        # Ensure precision is non-decreasing
+        for i in range(len(precisions) - 1, 0, -1):
+            precisions[i-1] = max(precisions[i-1], precisions[i])
+        # Compute ap as the area under PR curve
+        indices = np.where(recalls[1:] != recalls[:-1])[0]
+        ap = np.sum((recalls[indices + 1] - recalls[indices]) * precisions[indices + 1])
+        return ap
 
-    #     # Compute trend line (Quadratic fit)
-    #     if len(distances) > 5:
-    #         z = np.polyfit(distances, confidences, 2)  # Quadratic fit
-    #         p = np.poly1d(z)
-    #         sorted_distances = np.sort(distances)
-    #         trend_values = p(sorted_distances)
+    def evaluate_image(self, predictions, ground_truths, iou_threshold=0.5, conf_threshold=None):
+        """Compute AP for a single image, ensuring class matches before IoU comparison."""
+        if conf_threshold is not None:
+            predictions = [pred for pred in predictions if pred[2] >= conf_threshold]
+        predictions = sorted(predictions, key=lambda x: x[2], reverse=True)  # Sort by confidence
+        tps, fps = [], []
+        assigned = set()  # Track assigned ground-truth boxes
 
-    #         # Compute standard deviation in distance bins
-    #         num_bins = 10  # Adjust as needed
-    #         bin_means, bin_edges, _ = binned_statistic(distances, confidences, statistic='mean', bins=num_bins)
-    #         bin_stds, _, _ = binned_statistic(distances, confidences, statistic='std', bins=num_bins)
+        for pred_class, pred_box, conf in predictions:
+            matched_gt = [
+                (i, self.iou(pred_box, gt_box)) for i, (gt_class, gt_box) in enumerate(ground_truths) 
+                if gt_class == pred_class]
+            if not matched_gt:
+                fps.append(1)  # No matching ground truth found
+                tps.append(0)
+                continue
 
-    #         # Compute bin centers
-    #         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            best_idx, best_iou = max(matched_gt, key=lambda x: x[1])  # Get best match based on IoU
 
-    #         # Interpolate standard deviation to match smooth trend line
-    #         std_interpolated = np.interp(sorted_distances, bin_centers, bin_stds, left=bin_stds[0], right=bin_stds[-1])
+            if best_iou >= iou_threshold and best_idx not in assigned:
+                tps.append(1)
+                fps.append(0)
+                assigned.add(best_idx)
+            else:
+                tps.append(0)
+                fps.append(1)
 
-    #         # Plot trend line
-    #         plt.plot(sorted_distances, trend_values, "r-", label="Trend Line")
+        if conf_threshold is not None:
+            recall = sum(tps) / len(ground_truths) if ground_truths else 0
+            precision = sum(tps) / len(predictions) if predictions else 0
+            return precision, recall
+        else:
+            tps = np.cumsum(tps)
+            fps = np.cumsum(fps)
+            recalls = tps / len(ground_truths) if ground_truths else np.array([])
+            precisions = tps / (tps + fps) if (tps + fps).any() else np.array([])
+            return precisions, recalls
 
-    #         # Fill area with standard deviation band
-    #         plt.fill_between(sorted_distances, trend_values - std_interpolated, trend_values + std_interpolated, 
-    #                         color='r', alpha=0.3, label="Std Deviation")
+    def compute_aps(self, iou_threshold=0.5):
+        self.aps = []
+        for i in range(len(self.predictions)):
+            p_stamp, predictions = self.predictions[i]
+            l_stamp, labels = self.labels[i]
+            if p_stamp != l_stamp:
+                raise ValueError("Timestamps of predictions and labels do not match.")
+            precisions, recalls = self.evaluate_image(predictions, labels, iou_threshold)
+            ap = self.compute_ap(precisions, recalls)
+            self.aps.append((p_stamp, ap))
+        print(f"Computed {len(self.aps)} AP values.")
 
-    #     # Add colorbar
-    #     cbar = plt.colorbar(scatter)
-    #     cbar.set_label('Confidence')
+    def plot_metrics_vs_distance(self, num_bins=20, iou_threshold=0.5, confidence_thresholds=[0.5], metrics=["precision", "recall", "f1"]):
+        """Create plots of several metrics vs distances from the dock."""
 
-    #     plt.xlabel('Distance (meters)')
-    #     plt.ylabel('Confidence')
-    #     plt.title('Confidence vs Distance from Dock')
-    #     plt.grid(True, linestyle="--", alpha=0.6)
-    #     plt.legend()
-    #     plt.show()
+        plots = {}
+        for metric in metrics:
+            plots[metric] = plt.figure(f"{metric.capitalize()} vs Distance from Dock (IoU: {iou_threshold})", figsize=(10, 6))
+            plt.xlabel("Distance from Dock (m)")
+            plt.ylabel(metric.capitalize())
+            plt.title(f"{metric.capitalize()} vs Distance from Dock (IoU Threshold: {iou_threshold})")
+            plt.grid(axis="y", linestyle="--", alpha=0.7)
+        
+        distances = self.distances[:, 1]
 
-    def plot_confidence_vs_distance(self, num_bins=20):
-        """Plot confidence vs distance as a vertical bar plot with standard deviation."""
-        distance_df = pd.DataFrame(self.distances, columns=["timestamp", "distance"])
-        confidence_df = pd.DataFrame(self.confidences, columns=["timestamp", "confidence"])
+
+        for confidence_threshold in confidence_thresholds:
+            scores = {"precision": [], "recall": [], "f1": []}
+            for i in range(len(self.predictions)):
+                p_stamp, predictions = self.predictions[i]
+                l_stamp, labels = self.labels[i]
+                if p_stamp != l_stamp:
+                    raise ValueError("Timestamps of predictions and labels do not match.")
+                precision, recall = self.evaluate_image(predictions, labels, iou_threshold, confidence_threshold)
+                if 'precision' in metrics:
+                    scores['precision'].append(precision)
+                if 'recall' in metrics:
+                    scores["recall"].append(recall)
+                if 'f1' in metrics:
+                    scores["f1"].append(2 * precision * recall / (precision + recall) if precision + recall > 0 else 0)
+
+            for metric in metrics:
+                # Compute binned statistics
+                values = np.array(scores[metric])
+                bin_means, bin_edges, _ = binned_statistic(distances, values, statistic='mean', bins=num_bins)
+                bin_stds, _, _ = binned_statistic(distances, values, statistic='std', bins=num_bins)
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+                plot = plots[metric]
+                plt.figure(plot.number)
+                plt.plot(bin_centers, bin_means, label=f'Confidence {confidence_threshold}', linewidth=2)
+                plt.fill_between(bin_centers, bin_means - bin_stds, bin_means + bin_stds, alpha=0.2)
+                plt.legend()
+                
+        for metric in metrics:
+            plot = plots[metric]
+            plt.show()
+
+
+    def plot_ap_vs_distance(self, num_bins=20, iou_threshold=0.5):
+        """Plot the a score vs distance from the dock."""
+        distances = pd.DataFrame(self.distances, columns=["timestamp", "distance"])
+        aps = pd.DataFrame(self.aps, columns=["timestamp", "ap"])
 
         # Merge the two DataFrames based on timestamp
-        merged_df = pd.merge(distance_df, confidence_df, on="timestamp", how="inner")
+        merged_df = pd.merge(distances, aps, on="timestamp", how="inner")
         distances = merged_df['distance'].to_numpy()
-        confidences = merged_df['confidence'].to_numpy()
+        scores = merged_df['ap'].to_numpy()
 
         # Compute binned statistics for means and standard deviations
-        bin_means, bin_edges, _ = binned_statistic(distances, confidences, statistic='mean', bins=num_bins)
-        bin_stds, _, _ = binned_statistic(distances, confidences, statistic='std', bins=num_bins)
+        bin_means, bin_edges, _ = binned_statistic(distances, scores, statistic='mean', bins=num_bins)
+        bin_stds, _, _ = binned_statistic(distances, scores, statistic='std', bins=num_bins)
         
         # Compute bin centers
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
         # Normalize confidence values for color mapping
-        norm_confidences = (bin_means - np.min(bin_means)) / (np.max(bin_means) - np.min(bin_means) + 1e-6)
+        norm_scores = (bin_means - np.min(bin_means)) / (np.max(bin_means) - np.min(bin_means) + 1e-6)
         
         # Create the bar plot
         plt.figure(figsize=(10, 6))
         bars = plt.bar(bin_centers, bin_means, width=(bin_edges[1] - bin_edges[0]) * 0.9, 
-                    color=plt.cm.viridis(norm_confidences), edgecolor="black", yerr=bin_stds, capsize=5)
-
-        # # Color bar legend
-        # sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=np.min(bin_means), vmax=np.max(bin_means)))
-        # cbar = plt.colorbar(sm)
-        # cbar.set_label("Average Confidence")
+                    color=plt.cm.viridis(norm_scores), edgecolor="black", yerr=bin_stds, capsize=5)
 
         # Labels and title
-        plt.xlabel("Distance from Dock (meters)")
-        plt.ylabel("Mean Confidence")
-        plt.title("Average Confidence vs Distance from Dock")
+        plt.xlabel("Distance from Dock (m)")
+        plt.ylabel("Average Precision")
+        plt.title(f"Average Precision vs Distance from Dock (IoU Threshold: {iou_threshold})")
         plt.grid(axis="y", linestyle="--", alpha=0.7)
-        
         plt.show()
 
-    def evaluate(self, topic):
+    def plot_gps_vs_dock(self):
+        gps_df = pd.DataFrame(self.gps_coords, columns=["timestamp", "latitude", "longitude"])
+        gps_df['ap'] = [a[1] for a in self.aps]  # Assuming AP list is ordered by timestamp
+
+        # Convert latitude and longitude to meters relative to the dock location
+        dock_lat, dock_lon = self.dock_coordinates
+        earth_radius = 6371000  # Earth radius in meters
+        def lat_lon_to_meters(lat, lon):
+            """Convert latitude and longitude to meters relative to the dock location."""
+            dlat = np.radians(lat - dock_lat)
+            dlon = np.radians(lon - dock_lon)
+            x = dlon * earth_radius * np.cos(np.radians(dock_lat))
+            y = dlat * earth_radius
+            return x, y
+        gps_df['x'], gps_df['y'] = zip(*gps_df.apply(lambda row: lat_lon_to_meters(row['latitude'], row['longitude']), axis=1))
+        dock_x, dock_y = lat_lon_to_meters(dock_lat, dock_lon)
+
+        # Adjust plot limits to start slightly before the dock location
+        x_min = min(gps_df['x'].min(), dock_x) - 10
+        y_min = min(gps_df['y'].min(), dock_y) - 10
+        x_max = max(gps_df['x'].max(), dock_x) + 10
+        y_max = max(gps_df['y'].max(), dock_y) + 10
+
+        # Create a scatter plot of GPS locations, colored by confidence
+        plt.figure(figsize=(10, 6))
+        scatter = plt.scatter(gps_df['x'], gps_df['y'], c=gps_df['ap'], cmap='viridis')
+        plt.colorbar(scatter, label='Average Precision')
+        plt.scatter(dock_x, dock_y, color='red', marker='x', label="Dock Location")
+        plt.xlabel('X (meters)')
+        plt.ylabel('Y (meters)')
+        plt.title('GPS Locations vs Dock Location (in meters)')
+        plt.xlim(x_min, x_max)
+        plt.ylim(y_min, y_max)
+        plt.legend()
+        plt.grid()
+        plt.show()
+
+    def evaluate(self, bins=40, iou_threshold=0.5):
         """Run the complete evaluation by extracting data and plotting results."""
-        self.extract_gps_data(topic)
-        self.extract_confidences()
-        self.interpolate_gps_data()
+        self.extract_data()
         self.calculate_distances()
+        # self.compute_aps(iou_threshold)
+        # self.plot_ap_vs_distance(bins, iou_threshold)
+        self.plot_metrics_vs_distance(bins, iou_threshold, confidence_thresholds=[0.1, 0.3, 0.5, 0.7, 0.9], metrics=["precision", "recall", "f1"])
         self.plot_gps_vs_dock()
-        self.plot_confidence_vs_distance()
 
 
 if __name__ == "__main__":
-    dock_lat, dock_lon = 51.81477243831143, 4.766330011467225  # Dock location coordinates
-    rosbag = "/home/daan/Data/dock_data/rosbags/rosbag2_2024_09_17-16_02_29"
-    label_folder = '/home/daan/object_detection/YOLO/runs/m:YOLO11n_e:300_b:8_d:split-1/predict/labels'
-    gps_eval = GPS_Evaluation(rosbag, label_folder, (dock_lat, dock_lon))
-    gps_eval.evaluate('/sensors/gnss/fix')
+    data_folder = '/home/daan/Data/dock_data'  # Folder containing images, labels and gps_coords folders
+    project_folder = "/home/daan/object_detection/"
+
+    dock_lat, dock_lon = 51.82106762532677, 4.888864958997777  # Dock location coordinates
+    rosbag_name = ["rosbag2_2024_09_17-14_40_19", "rosbag2_2024_09_17-14_48_48", "rosbag2_2024_09_17-14_58_53", "rosbag2_2024_09_17-20_27_46"]
+
+    run_name = "m:YOLO11s_e:600_b:8_d:split-1(2)"
+    iou_threshold = 0.1
+    bins = 40
+
+
+
+    model = "YOLO" if run_name.startswith("m:YOLO") else run_name.split("_")[0][2:]
+    prediction_folder = os.path.join(project_folder, model, "runs", run_name, "predict", "labels")
+    gps_eval = GPS_Evaluation(data_folder, prediction_folder, rosbag_name, (dock_lat, dock_lon))
+    gps_eval.evaluate(bins=bins, iou_threshold=iou_threshold)
