@@ -6,9 +6,11 @@ from tqdm import tqdm
 import numpy as np
 import yaml
 import matplotlib.pyplot as plt
+from ultralytics.utils import DEFAULT_CFG_DICT
 
-def validation(run_dir, model, dataloader, iou_threshold=0.5, create_plots=False):
-    metrics = EvaluationMetrics(run_dir=run_dir, model=model, dataloader=dataloader, iou_threshold=iou_threshold, val_plots=create_plots)
+
+def validation(run_dir, model, dataloader, iou_threshold=0.5, conf_threshold=0.25, create_plots=False):
+    metrics = EvaluationMetrics(run_dir=run_dir, model=model, dataloader=dataloader, iou_threshold=iou_threshold, conf_threshold=conf_threshold, val_plots=create_plots)
     results = metrics()
     return {key: np.float64(value) for key, value in results.items()}
 
@@ -20,7 +22,7 @@ def evaluation(run_dir, iou_threshold=0.5, create_plots=True):
     
 
 class EvaluationMetrics:
-    def __init__(self, run_dir, model=None, dataloader=None, test_plots=False, val_plots=False, device=None, iou_threshold=0.5):
+    def __init__(self, run_dir, model=None, dataloader=None, test_plots=False, val_plots=False, device=None, iou_threshold=0.5, conf_threshold=0.5):
         self.run_dir = run_dir
         self.model = model
         self.dataloader = dataloader
@@ -28,6 +30,7 @@ class EvaluationMetrics:
         self.val_plots = val_plots
         self.device = device
         self.iou_threshold = iou_threshold
+        self.conf_thres = conf_threshold
         if isinstance(self.device, str):
             self.device = torch.device(device)
         if self.device is None:
@@ -40,7 +43,7 @@ class EvaluationMetrics:
             use_dataloader = True
         else:
             use_dataloader = False
-            dataset = self.run_dir.split(":")[-1]
+            dataset = self.run_dir.split(":")[-1].split("_")[0]
             self.label_dir = os.path.join(self.run_dir, "predict", "labels")
             project_dir = os.path.dirname(os.path.dirname(os.path.dirname(self.run_dir)))
             self.data_config_file = os.path.join(project_dir, "dataset_configs", dataset, "dataset.yaml")
@@ -79,18 +82,21 @@ class EvaluationMetrics:
         """
         all_predictions = []
         all_ground_truths = []
-
+        
+        model.roi_heads.score_thresh = self.conf_thres
         model.eval()
         with torch.no_grad():
             num=0
-            for images, targets, filenames in dataloader:
+            for batch in dataloader:
                 num+=1
-                print(num)
+                images = batch['img']
                 images = [img.to(self.device) for img in images]
                 with autocast(self.device.type):
                     predictions = model(images)
+
+                targets = batch['targets']
                     
-                for i, filename in enumerate(filenames):
+                for i, target in enumerate(targets):
                     gt_labels = targets[i]['labels'].cpu().numpy()
                     gt_boxes = targets[i]['boxes'].cpu().numpy()
                     pred_labels = predictions[i]['labels'].cpu().numpy()
@@ -372,7 +378,7 @@ class EvaluationMetrics:
         # F1-Confidence curve
         f1_curve_path = os.path.join(self.run_dir, 'F1_curve.png')
         if not os.path.exists(f1_curve_path):
-            f1s = 2 * precisions * recalls / (precisions + recalls)
+            f1s = 2 * precisions * recalls / (precisions + recalls + 1e-9)
             plt.figure()
             plt.plot(confidence_thresholds, f1s, label='F1')
             plt.xlabel('Confidence Threshold')
@@ -446,9 +452,8 @@ class EvaluationMetrics:
                 plt.savefig(epoch_results_path)
         else:
             print("results.png already exists or results.csv not found at", epoch_results)
-
+    
             
-
     
 
 def pascal_to_yolo(xmin, ymin, xmax, ymax, img_w=1, img_h=1):

@@ -2,7 +2,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
-from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, FasterRCNN_ResNet50_FPN_Weights
 from torch.amp import autocast
 import numpy as np
 import cv2
@@ -11,17 +11,23 @@ from tqdm import tqdm
 from Faster_RCNN.custom_dataset import CustomDataset
 from Faster_RCNN.custom_transforms import CustomTransforms, Resize, ToTensor
 
+from ultralytics.utils import DEFAULT_CFG_DICT
+from ultralytics.cfg import get_cfg
+
 
 class FasterRCNNPredictor:
-    def __init__(self, project_folder, run_name, conf_thres=0.01, imgsz=640, batch_size=8):
+    def __init__(self, project_folder, run_name, conf_thresh=0.01, imgsz=640, batch_size=8):
         print("\n--- Predicting Faster-RCNN ---\n")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.conf_thres = conf_thres
         self.imgsz = imgsz
         self.batch_size = batch_size
+        self.conf_thresh = conf_thresh
         self.run_dir = os.path.join(project_folder, "Faster_RCNN", "runs", run_name)
         self.data_config_folder = os.path.join(project_folder, "dataset_configs")
         self.data_name = run_name.split(":")[-1].split("_")[0]
+
+        self.args = get_cfg(DEFAULT_CFG_DICT.copy())
+
 
         self._load_data()
 
@@ -85,14 +91,25 @@ class FasterRCNNPredictor:
 
     def _load_model(self, model_path=None):
         print("Loading model...")
-        self.model = fasterrcnn_resnet50_fpn(weights=None)
-        in_features = self.model.roi_heads.box_predictor.cls_score.in_features
-        self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features, self.nc+1)
         if model_path is None:
             model_path = os.path.join(self.run_dir, "weights", "best.pt")
-        if os.path.exists(model_path):
-            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-            self.model.to(self.device)
-        else:
-            "No model found at", model_path
-            return
+        if not os.path.exists(model_path):
+            print(f"No model found at {model_path}")
+            exit()
+
+        checkpoint = torch.load(model_path, map_location=self.device)
+        train_args = checkpoint['train_args']
+
+
+        self.model = fasterrcnn_resnet50_fpn(weights=None,
+                                             min_size=self.imgsz,
+                                             max_size=self.imgsz,
+                                             box_score_thresh=self.conf_thresh,
+                                             box_nms_thresh=self.args.get("iou", 0.7),
+                                             box_detections_per_img=self.args.get("max_det", 100))
+        if train_args.get('compile', False):
+            self.model.backbone.body = torch.compile(self.model.backbone.body)
+        in_features = self.model.roi_heads.box_predictor.cls_score.in_features
+        self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features, self.nc+1)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.model.to(self.device)

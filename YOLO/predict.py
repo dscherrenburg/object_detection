@@ -5,14 +5,14 @@ from itertools import islice
 from ultralytics import YOLO
 
 class YOLOPredictor:
-    def __init__(self, project_folder: str, run_name: str, conf_thres=0.01, imgsz=640, batch_size=8):
+    def __init__(self, project_folder: str, run_name: str, conf_thres=0.001, imgsz=640, batch_size=8):
         print("\n--- Predicting YOLO ---\n")
         self.conf_thres = conf_thres
         self.imgsz = imgsz
         self.batch_size = batch_size
         self.run_dir = os.path.join(project_folder, "YOLO", "runs", run_name)
         self.data_config_folder = os.path.join(project_folder, "dataset_configs")
-        self.data_name = run_name.split(":")[-1]
+        self.data_name = run_name.split(":")[-1].split("_")[0]
 
     def predict(self, model_path=None):
         if model_path is not None:

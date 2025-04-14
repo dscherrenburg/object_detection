@@ -13,7 +13,6 @@ class Resize(object):
 
         # Resize image and target boxes
         image = F.resize(image, [new_h, new_w])
-        target["boxes"] *= scale
         return image, target
         
 

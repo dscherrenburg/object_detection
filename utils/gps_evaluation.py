@@ -140,26 +140,21 @@ class GPS_Evaluation:
         indices = np.where(recalls[1:] != recalls[:-1])[0]
         ap = np.sum((recalls[indices + 1] - recalls[indices]) * precisions[indices + 1])
         return ap
-
-    def evaluate_image(self, predictions, ground_truths, iou_threshold=0.5, conf_threshold=None):
-        """Compute AP for a single image, ensuring class matches before IoU comparison."""
+    
+    def determine_tps_fps(self, predictions, ground_truths, iou_threshold=0.5, conf_threshold=None):
+        """Determine true positives and false positives based on IoU and confidence threshold."""
         if conf_threshold is not None:
             predictions = [pred for pred in predictions if pred[2] >= conf_threshold]
-        predictions = sorted(predictions, key=lambda x: x[2], reverse=True)  # Sort by confidence
+        predictions = sorted(predictions, key=lambda x: x[2], reverse=True)
         tps, fps = [], []
         assigned = set()  # Track assigned ground-truth boxes
-
         for pred_class, pred_box, conf in predictions:
-            matched_gt = [
-                (i, self.iou(pred_box, gt_box)) for i, (gt_class, gt_box) in enumerate(ground_truths) 
-                if gt_class == pred_class]
+            matched_gt = [(i, self.iou(pred_box, gt_box)) for i, (gt_class, gt_box) in enumerate(ground_truths) if gt_class == pred_class]
             if not matched_gt:
-                fps.append(1)  # No matching ground truth found
+                fps.append(1)
                 tps.append(0)
                 continue
-
             best_idx, best_iou = max(matched_gt, key=lambda x: x[1])  # Get best match based on IoU
-
             if best_iou >= iou_threshold and best_idx not in assigned:
                 tps.append(1)
                 fps.append(0)
@@ -167,6 +162,12 @@ class GPS_Evaluation:
             else:
                 tps.append(0)
                 fps.append(1)
+        return tps, fps
+
+    def evaluate_image(self, predictions, ground_truths, iou_threshold=0.5, conf_threshold=None):
+        """Compute AP for a single image, ensuring class matches before IoU comparison."""
+        
+        tps, fps = self.determine_tps_fps(predictions, ground_truths, iou_threshold, conf_threshold)
 
         if conf_threshold is not None:
             recall = sum(tps) / len(ground_truths) if ground_truths else 0
@@ -193,10 +194,14 @@ class GPS_Evaluation:
 
     def plot_metrics_vs_distance(self, num_bins=20, iou_threshold=0.5, confidence_thresholds=[0.5], metrics=["precision", "recall", "f1"]):
         """Create plots of several metrics vs distances from the dock."""
-
         plots = {}
         for metric in metrics:
-            plots[metric] = plt.figure(f"{metric.capitalize()} vs Distance from Dock (IoU: {iou_threshold})", figsize=(10, 6))
+            if metric not in ["precision", "recall", "f1", "confidence"]:
+                raise ValueError(f"Invalid metric: {metric}. Supported metrics are: precision, recall, f1, confidence.")
+            title = f"{metric.capitalize()} vs Distance from Dock"
+            if metric != "confidence":
+                title += f" (IoU: {iou_threshold})"
+            plots[metric] = plt.figure(title, figsize=(10, 6))
             plt.xlabel("Distance from Dock (m)")
             plt.ylabel(metric.capitalize())
             plt.title(f"{metric.capitalize()} vs Distance from Dock (IoU Threshold: {iou_threshold})")
@@ -204,9 +209,9 @@ class GPS_Evaluation:
         
         distances = self.distances[:, 1]
 
-
+        first_loop = True
         for confidence_threshold in confidence_thresholds:
-            scores = {"precision": [], "recall": [], "f1": []}
+            scores = {metric: [] for metric in metrics}
             for i in range(len(self.predictions)):
                 p_stamp, predictions = self.predictions[i]
                 l_stamp, labels = self.labels[i]
@@ -219,64 +224,47 @@ class GPS_Evaluation:
                     scores["recall"].append(recall)
                 if 'f1' in metrics:
                     scores["f1"].append(2 * precision * recall / (precision + recall) if precision + recall > 0 else 0)
+                if 'confidence' in metrics and first_loop:
+                    scores['confidence'].append(np.mean([pred[2] for pred in predictions]) if predictions else 0)
 
             for metric in metrics:
                 # Compute binned statistics
+                if metric == "confidence" and not first_loop:
+                    continue
                 values = np.array(scores[metric])
                 bin_means, bin_edges, _ = binned_statistic(distances, values, statistic='mean', bins=num_bins)
                 bin_stds, _, _ = binned_statistic(distances, values, statistic='std', bins=num_bins)
+                lower_bounds, upper_bounds = np.clip(bin_means - bin_stds, 0, 1), np.clip(bin_means + bin_stds, 0, 1)
                 bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
                 plot = plots[metric]
                 plt.figure(plot.number)
-                plt.plot(bin_centers, bin_means, label=f'Confidence {confidence_threshold}', linewidth=2)
-                plt.fill_between(bin_centers, bin_means - bin_stds, bin_means + bin_stds, alpha=0.2)
-                plt.legend()
-                
+                plt.fill_between(bin_centers, lower_bounds, upper_bounds, alpha=0.2)
+                if metric != "confidence":
+                    plt.plot(bin_centers, bin_means, label=f'Confidence {confidence_threshold}', linewidth=2)
+                    plt.legend()
+                else:
+                    plt.plot(bin_centers, bin_means, linewidth=2)
+            first_loop = False
+        
         for metric in metrics:
             plot = plots[metric]
             plt.show()
 
 
-    def plot_ap_vs_distance(self, num_bins=20, iou_threshold=0.5):
-        """Plot the a score vs distance from the dock."""
-        distances = pd.DataFrame(self.distances, columns=["timestamp", "distance"])
-        aps = pd.DataFrame(self.aps, columns=["timestamp", "ap"])
-
-        # Merge the two DataFrames based on timestamp
-        merged_df = pd.merge(distances, aps, on="timestamp", how="inner")
-        distances = merged_df['distance'].to_numpy()
-        scores = merged_df['ap'].to_numpy()
-
-        # Compute binned statistics for means and standard deviations
-        bin_means, bin_edges, _ = binned_statistic(distances, scores, statistic='mean', bins=num_bins)
-        bin_stds, _, _ = binned_statistic(distances, scores, statistic='std', bins=num_bins)
+    def plot_gps_vs_dock(self, iou_threshold=0.5):
+        """Plot GPS coordinates against the dock location with green and red markers for correct and incorrect predictions."""
+        correct = []
+        for i in range(len(self.predictions)):
+            p_stamp, predictions = self.predictions[i]
+            l_stamp, labels = self.labels[i]
+            if p_stamp != l_stamp:
+                raise ValueError("Timestamps of predictions and labels do not match.")
+            tps, fps = self.determine_tps_fps(predictions, labels, iou_threshold)
+            correct.append(tps)
         
-        # Compute bin centers
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-        # Normalize confidence values for color mapping
-        norm_scores = (bin_means - np.min(bin_means)) / (np.max(bin_means) - np.min(bin_means) + 1e-6)
-        
-        # Create the bar plot
-        plt.figure(figsize=(10, 6))
-        bars = plt.bar(bin_centers, bin_means, width=(bin_edges[1] - bin_edges[0]) * 0.9, 
-                    color=plt.cm.viridis(norm_scores), edgecolor="black", yerr=bin_stds, capsize=5)
-
-        # Labels and title
-        plt.xlabel("Distance from Dock (m)")
-        plt.ylabel("Average Precision")
-        plt.title(f"Average Precision vs Distance from Dock (IoU Threshold: {iou_threshold})")
-        plt.grid(axis="y", linestyle="--", alpha=0.7)
-        plt.show()
-
-    def plot_gps_vs_dock(self):
-        gps_df = pd.DataFrame(self.gps_coords, columns=["timestamp", "latitude", "longitude"])
-        gps_df['ap'] = [a[1] for a in self.aps]  # Assuming AP list is ordered by timestamp
-
-        # Convert latitude and longitude to meters relative to the dock location
         dock_lat, dock_lon = self.dock_coordinates
-        earth_radius = 6371000  # Earth radius in meters
+        earth_radius = 6371000
         def lat_lon_to_meters(lat, lon):
             """Convert latitude and longitude to meters relative to the dock location."""
             dlat = np.radians(lat - dock_lat)
@@ -284,20 +272,20 @@ class GPS_Evaluation:
             x = dlon * earth_radius * np.cos(np.radians(dock_lat))
             y = dlat * earth_radius
             return x, y
-        gps_df['x'], gps_df['y'] = zip(*gps_df.apply(lambda row: lat_lon_to_meters(row['latitude'], row['longitude']), axis=1))
+        gps_df = pd.DataFrame(self.gps_coords, columns=["timestamp", "latitude", "longitude"])
+        xs, ys = zip(*gps_df.apply(lambda row: lat_lon_to_meters(row['latitude'], row['longitude']), axis=1))
         dock_x, dock_y = lat_lon_to_meters(dock_lat, dock_lon)
 
         # Adjust plot limits to start slightly before the dock location
-        x_min = min(gps_df['x'].min(), dock_x) - 10
-        y_min = min(gps_df['y'].min(), dock_y) - 10
-        x_max = max(gps_df['x'].max(), dock_x) + 10
-        y_max = max(gps_df['y'].max(), dock_y) + 10
+        x_min = min(min(xs), dock_x) - 10
+        y_min = min(min(ys), dock_y) - 10
+        x_max = max(max(xs), dock_x) + 10
+        y_max = max(max(ys), dock_y) + 10
 
-        # Create a scatter plot of GPS locations, colored by confidence
-        plt.figure(figsize=(10, 6))
-        scatter = plt.scatter(gps_df['x'], gps_df['y'], c=gps_df['ap'], cmap='viridis')
-        plt.colorbar(scatter, label='Average Precision')
-        plt.scatter(dock_x, dock_y, color='red', marker='x', label="Dock Location")
+        plt.figure("GPS Coordinates vs Dock Location", figsize=(10, 6))
+        for i, (x, y) in enumerate(zip(xs, ys)):
+            plt.scatter([x]*len(correct[i]), [y]*len(correct[i]), c=['green' if c==1 else 'red' for c in correct[i]], alpha=0.5, s=15)
+        plt.scatter(dock_x, dock_y, c='blue', marker='x', s=100, label='Dock Location')
         plt.xlabel('X (meters)')
         plt.ylabel('Y (meters)')
         plt.title('GPS Locations vs Dock Location (in meters)')
@@ -307,30 +295,37 @@ class GPS_Evaluation:
         plt.grid()
         plt.show()
 
-    def evaluate(self, bins=40, iou_threshold=0.5):
+
+    def evaluate(self, bins=40, iou_threshold=0.5, metrics=["precision", "recall", "f1"]):
         """Run the complete evaluation by extracting data and plotting results."""
         self.extract_data()
         self.calculate_distances()
-        # self.compute_aps(iou_threshold)
-        # self.plot_ap_vs_distance(bins, iou_threshold)
-        self.plot_metrics_vs_distance(bins, iou_threshold, confidence_thresholds=[0.1, 0.3, 0.5, 0.7, 0.9], metrics=["precision", "recall", "f1"])
-        self.plot_gps_vs_dock()
+        self.plot_metrics_vs_distance(bins, iou_threshold, confidence_thresholds=[0.1, 0.3, 0.5, 0.7, 0.9], metrics=metrics)
+        self.plot_gps_vs_dock(iou_threshold)
 
 
 if __name__ == "__main__":
     data_folder = '/home/daan/Data/dock_data'  # Folder containing images, labels and gps_coords folders
     project_folder = "/home/daan/object_detection/"
 
-    dock_lat, dock_lon = 51.82106762532677, 4.888864958997777  # Dock location coordinates
-    rosbag_name = ["rosbag2_2024_09_17-14_40_19", "rosbag2_2024_09_17-14_48_48", "rosbag2_2024_09_17-14_58_53", "rosbag2_2024_09_17-20_27_46"]
+    # old
+    dock_lat, dock_lon = 51.81477243831143, 4.766330011467225  # Dock location coordinates
+    rosbag_name = ["rosbag2_2024_09_17-16_02_29"]
+    run_name = "m:YOLO11n_e:600_b:8_d:split-1+label-5_2"
 
-    run_name = "m:YOLO11s_e:600_b:8_d:split-1(2)"
+    # version 2
+    # dock_lat, dock_lon = 51.82106762532677, 4.888864958997777  # Dock location coordinates
+    # rosbag_name = ["rosbag2_2024_09_17-14_40_19", "rosbag2_2024_09_17-14_48_48", "rosbag2_2024_09_17-14_58_53", "rosbag2_2024_09_17-20_27_46"]
+    # # rosbag_name = ["rosbag2_2024_09_17-14_40_19"]
+    # run_name = "m:YOLO11n_e:600_b:8_d:split-1(2)"
+
     iou_threshold = 0.1
-    bins = 40
+    bins = 20
+    metrics = ["precision", "recall", "f1", "confidence"]
 
 
 
     model = "YOLO" if run_name.startswith("m:YOLO") else run_name.split("_")[0][2:]
     prediction_folder = os.path.join(project_folder, model, "runs", run_name, "predict", "labels")
     gps_eval = GPS_Evaluation(data_folder, prediction_folder, rosbag_name, (dock_lat, dock_lon))
-    gps_eval.evaluate(bins=bins, iou_threshold=iou_threshold)
+    gps_eval.evaluate(bins=bins, iou_threshold=iou_threshold, metrics=metrics)

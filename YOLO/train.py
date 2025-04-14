@@ -7,25 +7,32 @@ import torch
 import math
 
 class YOLOTrainer:
-    def __init__(self, project_folder, model_name, data_name, epochs=50, patience=10, batch_size=8, imgsz=640, resume=True, single_cls=True):
+    def __init__(self, project_folder, run_name, patience=10, imgsz=640, resume=True, single_cls=True):
         print("\n--- Training YOLO ---\n")
-        self.project_folder, self.model_name, self.data_name = project_folder, model_name, data_name
-        self.epochs, self.patience, self.batch_size, self.imgsz = epochs, patience, batch_size, imgsz
+        self.project_folder, self.run_name = project_folder, run_name
+        self.patience, self.imgsz = patience, imgsz
         self.resume, self.single_cls = resume, single_cls
         self.data_config_folder = os.path.join(project_folder, "dataset_configs")
         self.runs_dir = os.path.join(project_folder, "YOLO", "runs")
-        self.run_name = f"m:{model_name}_e:{epochs}_b:{batch_size}_d:{data_name}"
+        model_data = self._extract_data_from_runname(run_name)
+        self.model_name = model_data['m']
+        self.data_name = model_data['d']
+        self.epochs = int(model_data['e'])
+        self.batch_size = int(model_data['b'])
 
     def train(self):
         old_run_name, model_path, last_epoch = self._get_resume_info()
         try:
+            # ckpt = torch.load(model_path)
+            # ckpt['epoch'] = 257
+            # torch.save(ckpt, model_path)
             yolo = YOLO(model_path)
             yolo.train(
                 data=os.path.join(self.data_config_folder, self.data_name, "dataset.yaml"),
                 epochs=self.epochs - last_epoch, resume=self.resume,
                 batch=self.batch_size, imgsz=self.imgsz, device=[0],
                 project=self.runs_dir, name=self.run_name, patience=self.patience,
-                verbose=True, single_cls=self.single_cls, half=True, max_det=10,
+                verbose=True, half=True, max_det=100,
             )
         except KeyboardInterrupt:
             print("\nTraining interrupted! Saving progress...")
@@ -46,8 +53,8 @@ class YOLOTrainer:
         # Get the default model path
         self.model_path = os.path.join(self.project_folder, "YOLO", "models", self.model_name.lower() + ".pt")
         if not os.path.exists(self.model_path):
-            raise FileNotFoundError(f"Model {self.model_name} not found.")
-        
+            self.model_path = self.model_name.lower() + ".pt"
+
         self.run_dir = os.path.join(self.runs_dir, self.run_name)
 
         # Check if we should resume training

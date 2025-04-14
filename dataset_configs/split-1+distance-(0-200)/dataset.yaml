@@ -1,0 +1,6 @@
+path: /home/daan/object_detection/dataset_configs/split-1+distance-(0-200)
+train: train.txt
+val: val.txt
+test: test.txt
+nc: 1
+names: ["dock"]

@@ -1,0 +1,14 @@
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-19_32_52/1726601624581106264.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-19_32_52/1726601678812724216.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-19_32_52/1726601693311886360.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-19_32_52/1726601709545198456.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-19_32_52/1726601743743536536.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-19_32_52/1726601752929272536.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-19_32_52/1726601763092741912.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-19_32_52/1726601769892388856.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-19_32_52/1726601832273403384.png
+/home/daan/Data/dock_data/images/rosbag2_2024_11_18-12_55_24/1731934791856030080.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-16_34_11/1726590933645301784.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-16_34_11/1726590949744900792.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-16_34_11/1726590959144610136.png
+/home/daan/Data/dock_data/images/rosbag2_2024_09_17-16_34_11/1726590970993907864.png

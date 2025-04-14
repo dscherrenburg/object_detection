@@ -9,11 +9,16 @@ import pandas as pd
 import cv2
 import time
 from tqdm import tqdm
+import yaml
 
 from Faster_RCNN.custom_dataset import CustomDataset
 from Faster_RCNN.custom_transforms import CustomTransforms, Resize, ToTensor
 from evaluate import validation
 
+from ultralytics.utils.torch_utils import torch_distributed_zero_first
+from ultralytics.data import build_dataloader, build_fasterrcnn_dataset
+from ultralytics.utils import DEFAULT_CFG_DICT
+from ultralytics.cfg import get_cfg
 
 class FasterRCNNTrainer:
     def __init__(self, project_folder, data_name, epochs=50, patience=10, batch_size=1, imgsz=640, resume=True):
@@ -25,78 +30,93 @@ class FasterRCNNTrainer:
         self.num_workers = min(8, os.cpu_count())  # Use available CPU cores efficiently
 
         self.data_config_folder = os.path.join(project_folder, "dataset_configs/")
-        run_name = f"e:{epochs}_b:{batch_size}_d:{data_name}"
-        self.run_dir = os.path.join(project_folder, "Faster_RCNN", "runs", run_name)
+        self.run_name = f"m:FRCNN_e:{epochs}_b:{batch_size}_d:{data_name}"
+        self.run_dir = os.path.join(project_folder, "Faster_RCNN", "runs", self.run_name)
         self.results_file = os.path.join(self.run_dir, "results.csv")
+
+        self.args = get_cfg(DEFAULT_CFG_DICT.copy())
 
         self._initialize()
 
     def train(self):
-        best_fitness = 0
-        epochs_no_improve = 0
+        if not hasattr(self, "best_fitness"):
+            self.best_fitness = 0
+            self.epochs_no_improve = 0
 
-        for epoch in range(self.epochs):
-            # epoch += int(self.last_epoch + 1)
-            # start_time = time.time()
-            # self.model.train()
-            # total_train_loss = 0
+        for epoch in range(self.last_epoch+1, self.epochs):
+            start_time = time.time()
+            self.model.train()
+            total_train_loss = 0
 
-            # progress_bar = tqdm(self.train_dataloader, desc=f"Epoch {epoch:>{len(str(self.epochs))}}/{self.epochs}", dynamic_ncols=True)
-            # for batch_idx, (images, targets, filenames) in enumerate(progress_bar):
-            #     images = images.to(self.device)
-            #     targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
+            progress_bar = tqdm(self.train_dataloader, desc=f"Epoch {epoch:>{len(str(self.epochs))}}/{self.epochs}", dynamic_ncols=True)
+            for batch_idx, batch in enumerate(progress_bar):
+                images = batch.get("img")
+                targets = batch.get("targets", None)
+                device = self.device
 
-            #     with autocast(self.device.type):
-            #         loss_dict = self.model(images, targets)
-            #         loss = sum(loss_dict.values())  # Avoiding redundant `.to(self.device)`
+                if targets is not None:
+                    targets = [
+                        {
+                            "boxes": t["boxes"].to(device=device),
+                            "labels": (t["labels"]).to(device=device),
+                        } for t in targets
+                    ]
+                
+                # Normalize images to [0, 1]
+                images = images
+                images = images.to(device=device, dtype=torch.half)
 
-            #     self.optimizer.zero_grad(set_to_none=True)
-            #     self.scaler.scale(loss).backward()
-            #     self.scaler.step(self.optimizer)
-            #     self.scaler.update()
+                with autocast(self.device.type):
+                    loss_dict = self.model(images, targets)
+                    loss = sum(loss_dict.values())  # Avoiding redundant `.to(self.device)`
 
-            #     total_train_loss += loss.item()
-            #     progress_bar.set_postfix(loss=f"{loss.item() / len(images):.4f}")
-            #     torch.cuda.empty_cache()
+                self.optimizer.zero_grad(set_to_none=True)
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
-            # train_loss = total_train_loss / len(self.train_dataloader)
+                # print("\n\n", torch.cuda.memory_allocated() / 1024 ** 2, "MB currently allocated")
+                # print(torch.cuda.max_memory_allocated() / 1024 ** 2, "MB peak")
+
+                total_train_loss += loss.item()
+                progress_bar.set_postfix(loss=f"{loss.item() / len(images):.4f}")
+                torch.cuda.empty_cache()
+
+            train_loss = total_train_loss / len(self.train_dataloader)
 
 
             # === VALIDATION PHASE ===
-            start_time = time.time()
-            train_loss = 0
-
             if epoch  == self.epochs:
-                val_metrics = validation(self.run_dir, self.model, self.val_dataloader, create_plots=True)
+                val_metrics = validation(self.run_dir, self.model, self.val_dataloader, create_plots=True, iou_threshold=self.args.iou, conf_threshold=0.25)
             else:
-                val_metrics = validation(self.run_dir, self.model, self.val_dataloader)
+                val_metrics = validation(self.run_dir, self.model, self.val_dataloader, create_plots=False, iou_threshold=self.args.iou, conf_threshold=0.25)
             self.total_time += time.time() - start_time
             lr = self.lr_scheduler.get_last_lr()[0]
-            results = [epoch+self.last_epoch+1, self.total_time, train_loss] + list(val_metrics.values()) + [lr]
+
+            fitness = 0.1 * val_metrics["mAP50"] + 0.9 * val_metrics["mAP50-95"]
+            results = [epoch, self.total_time, train_loss] + list(val_metrics.values()) + [fitness, lr]
 
             val_print = f"{' ' * 6}{' ' * (2 * len(str(self.epochs)) + 3)}"
             val_print += f"Train - loss: {train_loss:.4f}, lr: {lr:.2e}  ||    "
-            val_print += f"Validation - loss: {val_metrics['loss']:.4f}, mAP: {val_metrics['mAP50-95']:.4f}"
+            val_print += f"Validation - loss: {val_metrics['loss']:.4f}, mAP: {val_metrics['mAP50-95']:.4f}, fitness: {fitness:.4f}"
 
-            self.lr_scheduler.step(val_metrics["loss"])
+            self.lr_scheduler.step()
 
             # Save best model
-            fitness = 0.1 * val_metrics["mAP50"] + 0.9 * val_metrics["mAP50-95"]
-            if fitness > best_fitness:
-                best_fitness = fitness
-                epochs_no_improve = 0
-                os.makedirs(os.path.join(self.run_dir, "weights"), exist_ok=True)
-                torch.save(self.model.state_dict(), os.path.join(self.run_dir, "weights", "best.pt"))
+            if fitness > self.best_fitness:
+                self.best_fitness = fitness
+                self.epochs_no_improve = 0
+                self._save_checkpoint(epoch, results, save_best=True)
                 val_print += "   ==> Best model saved ✅"
             else:
-                epochs_no_improve += 1
-                if epochs_no_improve >= self.patience:
+                self.epochs_no_improve += 1
+                if self.epochs_no_improve >= self.patience:
                     val_print += "   ==> Early stopping triggered ⏳"
                     print(val_print)
                     break  # Stop training
             
             print(val_print)
-            self._save_checkpoint()
+            self._save_checkpoint(epoch, results)
             self._save_results(results)
         
     def _initialize(self):
@@ -106,61 +126,157 @@ class FasterRCNNTrainer:
 
     def _load_data(self):
         print("Loading data...")
-        data_yaml_file = os.path.join(self.data_config_folder, self.data_name, "dataset.yaml")
+        self.data_yaml_file = os.path.join(self.data_config_folder, self.data_name, "dataset.yaml")
+
+        self.args.data = self.data_yaml_file
+        self.args.epochs = self.epochs
+        self.args.patience = self.patience
+        self.args.batch = self.batch_size
+        self.args.imgsz = self.imgsz
+        
+        self.data = yaml.safe_load(open(self.data_yaml_file, "r"))
+
+        self.train_dataloader = self.get_dataloader(os.path.join(self.data["path"], self.data["train"]), self.batch_size, rank=0, mode="train")
+        self.val_dataloader = self.get_dataloader(os.path.join(self.data["path"], self.data["val"]), self.batch_size, rank=0, mode="val")
+        self.nc = self.data["nc"]
+
+        self._save_batch_samples(3)
+        return
         transform = CustomTransforms([Resize(self.imgsz), ToTensor()])
 
         def create_loader(split):
-            dataset = CustomDataset(data_yaml_file, split=split, transform=transform)
+            dataset = CustomDataset(self.data_yaml_file, split=split, transform=transform)
             return DataLoader(dataset, batch_size=self.batch_size, shuffle=(split == "train"),
                               collate_fn=dataset.collate_fn, num_workers=self.num_workers, pin_memory=True)
 
         self.train_dataloader = create_loader("train")
         self.val_dataloader = create_loader("val")
         self.nc = self.train_dataloader.dataset.nc
-        self._save_batch_samples(3)
+
+    def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
+        """
+        Construct and return dataloader for the specified mode.
+
+        Args:
+            dataset_path (str): Path to the dataset.
+            batch_size (int): Number of images per batch.
+            rank (int): Process rank for distributed training.
+            mode (str): 'train' for training dataloader, 'val' for validation dataloader.
+
+        Returns:
+            (DataLoader): PyTorch dataloader object.
+        """
+        assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
+        with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
+            dataset = build_fasterrcnn_dataset(self.args, dataset_path, batch_size, self.data, mode=mode, rect=mode == "val")
+        shuffle = mode == "train"
+        workers = self.args.workers if mode == "train" else self.args.workers * 2
+        return build_dataloader(dataset, batch_size, workers, shuffle, rank)  # return dataloader
 
     def _create_model(self):
         print("Creating model...")
         weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
-        self.model = fasterrcnn_resnet50_fpn(weights=weights)
+        freeze = self.args.get("freeze", 0)
+        trainable = max(0, 5 - freeze) if isinstance(freeze, int) else 5
+        self.model = fasterrcnn_resnet50_fpn(weights=weights,
+                                             trainable_backbone_layers=trainable,
+                                             min_size=self.imgsz,
+                                             max_size=self.imgsz,
+                                             box_score_thresh=self.args.get("conf", 0.001),
+                                             box_nms_thresh=self.args.get("iou", 0.7),
+                                             box_detections_per_img=self.args.get("max_det", 100))
+        if self.args.compile:
+            self.model.backbone.body = torch.compile(self.model.backbone.body)
+
         in_features = self.model.roi_heads.box_predictor.cls_score.in_features
         self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features, self.nc+1)
         self.model.to(self.device)
 
-        self.scaler = GradScaler(self.device.type)
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.005, momentum=0.9, weight_decay=0.0005)
-        self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=10)
+        self.scaler = GradScaler(self.device.type, enabled=True)
+        self.lr0 = self.args.lr0
+        self.momentum = self.args.momentum
+        self.weight_decay = self.args.weight_decay
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.lr0, momentum=self.momentum,
+                                         weight_decay=self.weight_decay, nesterov=True)
+        self.lf = lambda x: max(1 - x / self.epochs, 0) * (1.0 - self.args.lrf) + self.args.lrf  # linear
+        self.lr_scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.lf)
+        # self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.1, patience=10)
 
+        checkpoint_path = os.path.join(self.run_dir, "weights", "last.pt")
         if self.resume:
-            checkpoint_path = os.path.join(self.run_dir, "checkpoint.pth")
             if os.path.exists(checkpoint_path):
-                checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
+                checkpoint = torch.load(checkpoint_path, map_location=self.device)
                 self.model.load_state_dict(checkpoint['model_state_dict'])
                 self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
-                with open(self.results_file) as f:
-                    results = pd.read_csv(f)
-                    self.total_time = results["time"].iloc[-1]
-                    self.last_epoch = results["epoch"].iloc[-1]
-                print(f"Resumed training from checkpoint at epoch {self.last_epoch}.")
+                self.last_epoch = checkpoint['epoch']
+                self.total_time = checkpoint['time']
+                self.epochs = checkpoint['train_args']['epochs']
+                self.best_fitness = checkpoint['best_fitness']
+                self.epochs_no_improve = checkpoint.get('epochs_no_improve', 0)
+                print(f"Resuming training from epoch {self.last_epoch} with best fitness {self.best_fitness:.4f}.")
                 return
             else:
                 print("No checkpoint found.")
-
-        results = pd.DataFrame(columns=["epoch", "time", "train_loss", "precision", "recall", "f1", "mAP50", "mAP50-95", "val_loss", "lr"])
+        if os.path.exists(checkpoint_path):
+            inpt = input(f"A model with the same name seems to be trained already. Press Enter to overwrite it or type 'new' to start a new run.\n")
+            if inpt.lower() == "new":
+                print("Creating a new run.")
+                self.run_name = f"m:FRCNN_e:{self.epochs}_b:{self.batch_size}_d:{self.data_name}_2"
+                self.run_dir = os.path.join(self.project_folder, "Faster_RCNN", "runs", self.run_name)
+            else:
+                os.remove(self.run_dir)
+                print("Overwriting existing model.")
+        os.makedirs(self.run_dir, exist_ok=True)
+        results = pd.DataFrame(columns=["epoch", "time", "train_loss", "precision", "recall", "f1", "mAP50", "mAP50-95", "val_loss", "fitness", "lr"])
         results.to_csv(self.results_file, index=False)
         self.total_time = 0
         self.last_epoch = 0
         print("Starting training fresh.")
 
 
-    def _save_checkpoint(self):
+    def _save_checkpoint(self, epoch, results, save_best=False):
+        if save_best:
+            checkpoint_path = os.path.join(self.run_dir, "weights", "best.pt")
+        else:
+            checkpoint_path = os.path.join(self.run_dir, "weights", "last.pt")
+        os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
         checkpoint = {
+            'date': time.strftime("%Y-%m-%d %H:%M:%S"),
+            'epoch': epoch,
+            'best_fitness': self.best_fitness,
+            'epochs_no_improve': self.epochs_no_improve,
+            'time': self.total_time,
+            'train_args': {
+                'model': "FasterRCNN",
+                'compile': self.args.compile,
+                'data': self.data_yaml_file,
+                'epochs': self.epochs,
+                'patience': self.patience,
+                'batch_size': self.batch_size,
+                'imgsz': self.imgsz,
+                'save': True,
+                'save_period': 1,
+                'device': self.device.type,
+                'workers': self.num_workers,
+                'project': self.project_folder,
+                'name': self.run_name,
+                'pretrained': True,
+                'optimizer': 'SGD',
+                'resume': self.resume,
+                'lr0': self.lr0,
+                'momentum': self.momentum,
+                'weight_decay': self.weight_decay,
+                'lr_scheduler': 'ReduceLROnPlateau',
+                'lr_scheduler_patience': 10,
+                'lr_scheduler_factor': 0.1,
+            },
+            'train_metrics': results[2:],
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'lr_scheduler_state_dict': self.lr_scheduler.state_dict(),
         }
-        torch.save(checkpoint, os.path.join(self.run_dir, "checkpoint.pth"))
+        torch.save(checkpoint, checkpoint_path)
     
     def _save_results(self, results):
         with open(self.results_file, "a") as f:
@@ -180,9 +296,13 @@ class FasterRCNNTrainer:
             else:
                 raise ValueError(f"Invalid data type: {data_type}")
             
-            for batch_idx, (images, targets, filenames) in enumerate(dataloader):
+            for batch_idx, batch in enumerate(dataloader):
                 if batch_idx >= n_batches:
                     break
+                images = batch.get("img")
+                targets = batch.get("targets", None)
+                # cv2.imwrite(os.path.join(self.run_dir, f"test.png"), images[0].permute(1, 2, 0).cpu().numpy())
+
                 if data_type == "test":
                     images = images.to(self.device)
                     with torch.no_grad():
@@ -200,6 +320,7 @@ class FasterRCNNTrainer:
             image = images[i].permute(1, 2, 0).cpu().numpy()
             image = np.clip(image, 0, 1) * 255
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             boxes = targets[i]["boxes"].cpu().numpy()
             labels = targets[i]["labels"].cpu().numpy()
             for box, label in zip(boxes, labels):

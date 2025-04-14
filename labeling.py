@@ -585,7 +585,7 @@ class ImageLabelingTool:
 if __name__ == "__main__":
     IMAGE_DIR = "/home/daan/Data/dock_data/images/"
     LABEL_FILE = "/home/daan/Data/dock_data/labels/"
-    DATASET = "rosbag2_2024_11_18-12_55_24"
+    DATASET = "rosbag2_2024_09_17-17_13_13"
 
     shift_jump = 5
     max_interpolation = 200

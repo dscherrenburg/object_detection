@@ -43,14 +43,11 @@ def main(project_folder, model, data_name, epochs, patience, imgsz, train, resum
     if model.startswith("YOLO"):
         if model =="YOLO":
             model = "YOLO11s"
-        batch_size = 8
+        batch_size = 1
         run_name = f"m:{model}_e:{epochs}_b:{batch_size}_d:{data_name}"
         if train:
             trainer = YOLOTrainer(project_folder=project_folder,
-                                  model_name=model,
-                                  data_name=data_name,
-                                  epochs=epochs,
-                                  batch_size=batch_size,
+                                  run_name=run_name,
                                   imgsz=imgsz,
                                   patience=patience,
                                   resume=resume)
@@ -64,7 +61,7 @@ def main(project_folder, model, data_name, epochs, patience, imgsz, train, resum
             predictor.predict()
 
     elif model == "Faster_RCNN":
-        batch_size = 2
+        batch_size = 4
         run_name = f"m:FRCNN_e:{epochs}_b:{batch_size}_d:{data_name}"
         if train:
             trainer = FasterRCNNTrainer(project_folder=project_folder,
@@ -78,7 +75,7 @@ def main(project_folder, model, data_name, epochs, patience, imgsz, train, resum
         if predict:
             predictor = FasterRCNNPredictor(project_folder=project_folder,
                                             run_name=run_name,
-                                            conf_thres=0.01,
+                                            conf_thresh=0.01,
                                             imgsz=imgsz,
                                             batch_size=batch_size)
             predictor.predict(save_images=True, save_labels=True)
@@ -105,8 +102,8 @@ if __name__ == "__main__":
     project_folder = "/home/daan/object_detection/"
     model = "YOLO11n"                                          # 'YOLO[version]' or 'Faster_RCNN'
     # model = "Faster_RCNN"
-    data_name = "split-1(2)"                       # Must be a a dataset in the project_folder/dataset_configs folder
-    epochs = 600
+    data_name = "split-1+interval-5+distance-(0-200)"                       # Must be a a dataset in the project_folder/dataset_configs folder
+    epochs = 100
     patience = epochs // 2
     imgsz = 640
     train = True
@@ -116,5 +113,8 @@ if __name__ == "__main__":
 
 
     # Latest changes: single_cls=True, half=True (faster), max_det=10
-
+    # for i in range(2, 6):
+    #     data_name = f"split-{i}+interval-5+distance-(0-200)"
+    #     print(f"\n--- Running {model} on {data_name} ---\n")
+    #     main(project_folder, model, data_name, epochs, patience, imgsz, train, resume, predict, test)
     main(project_folder, model, data_name, epochs, patience, imgsz, train, resume, predict, test)
