@@ -6,7 +6,6 @@ from tqdm import tqdm
 import numpy as np
 import yaml
 import matplotlib.pyplot as plt
-from ultralytics.utils import DEFAULT_CFG_DICT
 
 
 def validation(run_dir, model, dataloader, iou_threshold=0.5, conf_threshold=0.25, create_plots=False):
@@ -95,7 +94,7 @@ class EvaluationMetrics:
                     predictions = model(images)
 
                 targets = batch['targets']
-                    
+
                 for i, target in enumerate(targets):
                     gt_labels = targets[i]['labels'].cpu().numpy()
                     gt_boxes = targets[i]['boxes'].cpu().numpy()
@@ -106,7 +105,6 @@ class EvaluationMetrics:
                     all_predictions.append([(int(label), box, score) for label, box, score in zip(pred_labels, pred_boxes, pred_scores)])
                     all_ground_truths.append([(int(label), box) for label, box in zip(gt_labels, gt_boxes)])
                 
-
         nc = dataloader.dataset.nc
         self.compute_metrics(all_predictions, all_ground_truths, iou_thresholds, nc)
 
@@ -164,7 +162,7 @@ class EvaluationMetrics:
         for iou_thresh in progress_bar:
             ap_per_class = []
 
-            for class_id in range(num_classes):
+            for class_id in range(1, num_classes+1):
                 class_preds = [[p for p in preds if p[0] == class_id] for preds in predictions]
                 class_gts = [[g for g in gts if g[0] == class_id] for gts in ground_truths]
 
@@ -233,6 +231,8 @@ class EvaluationMetrics:
             tp_i, fp_i, fn_i, tn_i = 0, 0, 0, 0
             pred_boxes = [yolo_to_pascal(*p[1]) for p in predictions[i]]
             gt_boxes = [yolo_to_pascal(*g[1]) for g in ground_truths[i]]
+            # pred_boxes = [p[1] for p in predictions[i]]
+            # gt_boxes = [g[1] for g in ground_truths[i]]
             if len(gt_boxes) == 0:
                 if len(pred_boxes) > 0:
                     fp_i += len(pred_boxes)

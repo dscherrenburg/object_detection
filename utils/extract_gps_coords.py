@@ -11,6 +11,8 @@ def extract_gps_coords_from_rosbags(folder_path, image_topics, gps_topic, output
     # Initialize the type store
     typestore = get_typestore(Stores.ROS2_FOXY)
 
+    rosbag_dirs = ["rosbag2_2024_09_17-15_59_28"]
+
     for rosbag in rosbag_dirs:
         bag_path = os.path.join(folder_path, rosbag)
         if output_folder:

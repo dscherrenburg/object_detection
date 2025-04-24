@@ -7,14 +7,16 @@ import torch
 import math
 
 class YOLOTrainer:
-    def __init__(self, project_folder, run_name, patience=10, imgsz=640, resume=True, single_cls=True):
-        print("\n--- Training YOLO ---\n")
-        self.project_folder, self.run_name = project_folder, run_name
+    def __init__(self, run_dir, patience=10, imgsz=640, resume=True):
+        self.run_dir = run_dir
         self.patience, self.imgsz = patience, imgsz
-        self.resume, self.single_cls = resume, single_cls
-        self.data_config_folder = os.path.join(project_folder, "dataset_configs")
-        self.runs_dir = os.path.join(project_folder, "YOLO", "runs")
-        model_data = self._extract_data_from_runname(run_name)
+        self.resume = resume
+
+        self.runs_dir = os.path.dirname(run_dir)
+        self.project_folder = os.path.dirname(os.path.dirname(self.runs_dir))
+        self.run_name = os.path.basename(run_dir)
+        self.data_config_folder = os.path.join(self.project_folder, "dataset_configs")
+        model_data = self._extract_data_from_runname(self.run_name)
         self.model_name = model_data['m']
         self.data_name = model_data['d']
         self.epochs = int(model_data['e'])
@@ -30,13 +32,13 @@ class YOLOTrainer:
             yolo.train(
                 data=os.path.join(self.data_config_folder, self.data_name, "dataset.yaml"),
                 epochs=self.epochs - last_epoch, resume=self.resume,
-                batch=self.batch_size, imgsz=self.imgsz, device=[0],
+                batch=self.batch_size, imgsz=self.imgsz, device=0,
                 project=self.runs_dir, name=self.run_name, patience=self.patience,
                 verbose=True, half=True, max_det=100,
             )
         except KeyboardInterrupt:
             print("\nTraining interrupted! Saving progress...")
-            last_weights = os.path.join(self.runs_dir, self.run_name, "weights", "last.pt")
+            last_weights = os.path.join(self.run_dir, "weights", "last.pt")
             if os.path.exists(last_weights):
                 print(f"Progress saved in {last_weights}. You can resume training later.")
             else:
@@ -46,7 +48,7 @@ class YOLOTrainer:
     
         if old_run_name:
             self._merge_results(old_run_name)
-        best_model_path = os.path.join(self.runs_dir, self.run_name, "weights", "best.pt")
+        best_model_path = os.path.join(self.run_dir, "weights", "best.pt")
         return best_model_path
     
     def _get_resume_info(self):
@@ -54,8 +56,6 @@ class YOLOTrainer:
         self.model_path = os.path.join(self.project_folder, "YOLO", "models", self.model_name.lower() + ".pt")
         if not os.path.exists(self.model_path):
             self.model_path = self.model_name.lower() + ".pt"
-
-        self.run_dir = os.path.join(self.runs_dir, self.run_name)
 
         # Check if we should resume training
         if not self.resume:
@@ -122,19 +122,3 @@ class YOLOTrainer:
         run_name_items = [item for item in run_name_items if len(item) == 2]
         return {key: value for key, value in run_name_items}
     
-
-
-if __name__ == "__main__":
-    project_folder = "/home/daan/object_detection/"
-    data_name = "split_1_interval_10"
-    epochs = 1
-    batch_size = 8
-    imgsz = 640
-    train = True
-    test = True
-    resume = True
-    confidence_threshold = 0.2
-    
-    trainer = YOLOTrainer(project_folder, data_name, epochs, batch_size, imgsz, resume, confidence_threshold)
-    
-    trainer.train() if train else None

@@ -311,7 +311,7 @@ if __name__ == "__main__":
     # old
     dock_lat, dock_lon = 51.81477243831143, 4.766330011467225  # Dock location coordinates
     rosbag_name = ["rosbag2_2024_09_17-16_02_29"]
-    run_name = "m:YOLO11n_e:600_b:8_d:split-1+label-5_2"
+    run_name = "m:FRCNN_e:100_b:1_d:split-1+interval-5+distance-(0-200)"
 
     # version 2
     # dock_lat, dock_lon = 51.82106762532677, 4.888864958997777  # Dock location coordinates
@@ -326,6 +326,7 @@ if __name__ == "__main__":
 
 
     model = "YOLO" if run_name.startswith("m:YOLO") else run_name.split("_")[0][2:]
+    model = "Faster_RCNN" if model == "FRCNN" else model
     prediction_folder = os.path.join(project_folder, model, "runs", run_name, "predict", "labels")
     gps_eval = GPS_Evaluation(data_folder, prediction_folder, rosbag_name, (dock_lat, dock_lon))
     gps_eval.evaluate(bins=bins, iou_threshold=iou_threshold, metrics=metrics)

@@ -45,7 +45,7 @@ class InfiniteDataLoader(dataloader.DataLoader):
 
     def __init__(self, *args, **kwargs):
         """Initialize the InfiniteDataLoader with the same arguments as DataLoader."""
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs, persistent_workers=True)
         object.__setattr__(self, "batch_sampler", _RepeatSampler(self.batch_sampler))
         self.iterator = super().__iter__()
 

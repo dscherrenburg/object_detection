@@ -1,0 +1,6 @@
+split,train, , val, , test, 
+ , docks, frames, docks, frames, docks, frames
+split-1, "Bunkerstation Dekker & Stam, Waterbus dock Hooikade, Waterbus dock Noordeinde, Veersteiger Boven Hardinxveld, Private dock Middeldiep, Waterbus dock Noordhoek", 13021, "Waterbus dock Rosmolenweg", 2747, "Waterbus dock Hollandse Biesbosch", 1652
+split-2, "Waterbus dock Hooikade, Waterbus dock Rosmolenweg, Waterbus dock Noordeinde, Veersteiger Boven Hardinxveld, Private dock Middeldiep, Waterbus dock Noordhoek", 12780, "Bunkerstation Dekker & Stam", 2988, "Waterbus dock Hollandse Biesbosch", 1652
+split-3, "Bunkerstation Dekker & Stam, Waterbus dock Hooikade, Waterbus dock Noordeinde, Waterbus dock Rosmolenweg, Veersteiger Boven Hardinxveld", 13838, "Waterbus dock Noordhoek, Private dock Middeldiep", 1930, "Waterbus dock Hollandse Biesbosch", 1652
+split-4, "Bunkerstation Dekker & Stam, Waterbus dock Rosmolenweg, Veersteiger Boven Hardinxveld, Private dock Middeldiep, Waterbus dock Noordhoek", 14833, "Waterbus dock Noordeinde, Waterbus dock Hooikade", 935, "Waterbus dock Hollandse Biesbosch", 1652

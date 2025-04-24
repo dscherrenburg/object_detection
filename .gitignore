@@ -3,6 +3,8 @@
 runs/
 results/
 old/
+predict/
+labels/
 
 
 

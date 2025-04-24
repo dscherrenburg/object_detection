@@ -241,13 +241,15 @@ if __name__ == "__main__":
             "rosbag2_2024_09_17-14_48_48": [(51.82109416005252, 4.8889499241694025), (51.82103406025281, 4.888777592235998)],
             "rosbag2_2024_09_17-14_58_53": [(51.82109416005252, 4.8889499241694025), (51.82103406025281, 4.888777592235998)],
             "rosbag2_2024_09_17-20_27_46": [(51.82109416005252, 4.8889499241694025), (51.82103406025281, 4.888777592235998)],
+
+            "rosbag2_2024_09_17-15_59_28": [(51.81687526993932, 4.779191387516475), (51.81691506383338, 4.7790639825969363)],
     }
 
-    for key, coords in dock_data.items():
-        width = haversine(coords[0], coords[1])
-        print(f"{key}: {width:.2f} meters")
+    # for key, coords in dock_data.items():
+    #     width = haversine(coords[0], coords[1])
+    #     print(f"{key}: {width:.2f} meters")
 
-    exit()
+    # exit()
 
     # Extract GPS coordinates
     gps_data = extract_gps_coords(rosbags_folder, gps_topic, image_topics, rosbags=dock_data.keys(), gps_data_dir=gps_data_dir)
