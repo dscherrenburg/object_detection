@@ -38,6 +38,9 @@ class FasterRCNNTrainer:
         self.epochs = int(model_data['e'])
         self.batch_size = int(model_data['b'])
 
+        
+        self.output_dir = '/Faster_RCNN/runs/' + self.run_name
+
         self._initialize()
 
     def train(self):
@@ -107,7 +110,7 @@ class FasterRCNNTrainer:
     def _initialize(self):
         self._load_data()
         self._create_model()
-        os.makedirs(self.run_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def _load_data(self):
         print("Loading data...")
@@ -192,7 +195,7 @@ class FasterRCNNTrainer:
             self.model.backbone.body = torch.compile(self.model.backbone.body)
 
 
-        checkpoint_path = os.path.join(self.run_dir, "weights", "last.pt")
+        checkpoint_path = os.path.join(self.output_dir, "weights", "last.pt")
         if self.resume:
             if os.path.exists(checkpoint_path):
                 checkpoint = torch.load(checkpoint_path, map_location=self.device)
@@ -204,7 +207,7 @@ class FasterRCNNTrainer:
                 self.epochs = checkpoint['train_args']['epochs']
                 self.best_fitness = checkpoint['best_fitness']
                 self.epochs_no_improve = checkpoint.get('epochs_no_improve', 0)
-                self.results_file = os.path.join(self.run_dir, "results.csv")
+                self.results_file = os.path.join(self.output_dir, "results.csv")
                 print(f"Resuming training from epoch {self.last_epoch} with best fitness {self.best_fitness:.4f}.")
                 return
             else:
@@ -214,14 +217,14 @@ class FasterRCNNTrainer:
             if inpt.lower() == "new":
                 print("Creating a new run.")
                 for i in range(2, 100):
-                    if not os.path.exists(self.run_dir + f"_{i}"):
-                        self.run_dir += f"_{i}"
+                    if not os.path.exists(self.output_dir + f"_{i}"):
+                        self.output_dir += f"_{i}"
                         break
             else:
-                shutil.rmtree(self.run_dir)
+                shutil.rmtree(self.output_dir)
                 print("Overwriting existing model.")
-        os.makedirs(self.run_dir, exist_ok=True)
-        self.results_file = os.path.join(self.run_dir, "results.csv")
+        os.makedirs(self.output_dir, exist_ok=True)
+        self.results_file = os.path.join(self.output_dir, "results.csv")
         results = pd.DataFrame(columns=["epoch", "time", "train_loss", "precision", "recall", "f1", "mAP50", "mAP50-95", "fitness", "lr"])
         results.to_csv(self.results_file, index=False)
         self.total_time = 0
@@ -231,9 +234,9 @@ class FasterRCNNTrainer:
 
     def _save_checkpoint(self, epoch, results, save_best=False):
         if save_best:
-            checkpoint_path = os.path.join(self.run_dir, "weights", "best.pt")
+            checkpoint_path = os.path.join(self.output_dir, "weights", "best.pt")
         else:
-            checkpoint_path = os.path.join(self.run_dir, "weights", "last.pt")
+            checkpoint_path = os.path.join(self.output_dir, "weights", "last.pt")
         os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
         checkpoint = {
             'date': time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -276,7 +279,7 @@ class FasterRCNNTrainer:
             f.write(",".join(map(str, results)) + "\n")        
 
     def _save_batch_samples(self, n_batches, data_type=None):
-        os.makedirs(self.run_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
         if data_type is None:
             print("Storing batch samples for train and val datasets...")
             self._save_batch_samples(n_batches, "train")
@@ -305,7 +308,7 @@ class FasterRCNNTrainer:
                     self._save_batch_sample(images, targets, name=f"{data_type}_batch{batch_idx}.png")
     
     def _save_batch_sample(self, images, targets, predictions=None, name="batch_samples.png"):
-        image_file = os.path.join(self.run_dir, name)
+        image_file = os.path.join(self.output_dir, name)
         if os.path.exists(image_file):
             return
         image_batch = []
