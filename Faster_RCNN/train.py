@@ -114,8 +114,9 @@ class FasterRCNNTrainer:
 
     def _load_data(self):
         print("Loading data...")
+        # project_folder = os.path.dirname(os.path.dirname(os.path.dirname(self.run_dir)))
+        # data_config_folder = os.path.join(project_folder, "dataset_configs/")
         self.data_yaml_file = os.path.join(self.data_config_dir, self.data_name, "dataset.yaml")
-        print(self.data_yaml_file)
 
         self.args.data = self.data_yaml_file
         self.args.epochs = self.epochs
