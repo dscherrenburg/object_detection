@@ -3,11 +3,11 @@ from pathlib import Path
 import pandas as pd
 
 # Define dataset root
-DATASET_ROOT = "/home/daan/Data/dock_data"
+DATASET_ROOT = "/kaggle/input/dock-data/"
 IMAGES_DIR = os.path.join(DATASET_ROOT, "images")
 LABELS_DIR = os.path.join(DATASET_ROOT, "labels")
 GPS_DIR = os.path.join(DATASET_ROOT, "gps_data")
-CONFIG_DIR = "/home/daan/object_detection/dataset_configs"
+CONFIG_DIR = "/kaggle/input/object_detection/pytorch/default/2/dataset_configs"
 
 def get_valid_folders():
     """Finds folders that have both an image and an annotation."""
@@ -60,38 +60,47 @@ def write_split_file(split_name, folders, images_dir, labels_dir, gps_dir, confi
         "written": 0
     }
 
+    all_valid_images = []
+
+    for folder in folders:
+        image_folder = os.path.join(images_dir, folder)
+        gps_file = os.path.join(gps_dir, f"{folder}.csv")
+        gps_map = load_gps_data(gps_file)
+
+        all_images = sorted(os.listdir(image_folder))
+        for img_name in all_images:
+            if not img_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+                continue
+
+            img_path = os.path.join(image_folder, img_name)
+            label_path = os.path.join(labels_dir, folder, Path(img_name).stem + ".txt")
+
+            # Check for label existence
+            if min_label_size > 0 and not os.path.exists(label_path):
+                skipped_info["missing_label"] += 1
+                continue
+
+            # Check label size
+            if min_label_size > 0 and label_too_small(label_path, min_label_size, image_size):
+                skipped_info["small_label"] += 1
+                continue
+
+            # Check distance range
+            if distance_range and distance_out_of_range(img_name, gps_map, distance_range):
+                skipped_info["out_of_range"] += 1
+                continue
+
+            # All checks passed
+            all_valid_images.append(img_path)
+
+    # Apply interval AFTER filtering
+    selected_images = all_valid_images[::interval]
+
+    # Write selected image paths to file
     with open(split_file_path, "w") as output_file:
-        for folder in folders:
-            image_folder = os.path.join(images_dir, folder)
-            gps_file = os.path.join(gps_dir, f"{folder}.csv")
-            gps_map = load_gps_data(gps_file)
-
-            image_list = sorted(os.listdir(image_folder))[::interval]
-
-            for img_name in image_list:
-                if not img_name.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    continue
-
-                img_path = os.path.join(image_folder, img_name)
-                label_path = os.path.join(labels_dir, folder, Path(img_name).stem + ".txt")
-
-                # Label size check
-                if min_label_size > 0:
-                    if not os.path.exists(label_path):
-                        skipped_info["missing_label"] += 1
-                        continue
-                    if label_too_small(label_path, min_label_size, image_size):
-                        skipped_info["small_label"] += 1
-                        continue
-
-                # Distance range check
-                if distance_range:
-                    if distance_out_of_range(img_name, gps_map, distance_range):
-                        skipped_info["out_of_range"] += 1
-                        continue
-
-                output_file.write(f"{img_path}\n")
-                skipped_info["written"] += 1
+        for img_path in selected_images:
+            output_file.write(f"{img_path}\n")
+            skipped_info["written"] += 1
 
     print(f"   [{split_name:<5}] Total kept: {skipped_info['written']:>5}  |  Skipped - Small label: {skipped_info['small_label']:>5}, "
           f"Missing label: {skipped_info['missing_label']:>5}, "
@@ -175,26 +184,16 @@ if __name__ == "__main__":
                   ["Waterbus dock Noordhoek", "Private dock Middeldiep"],
                   ["Waterbus dock Noordeinde", "Waterbus dock Hooikade"]]
     test_set_3 = ["Waterbus dock Hollandse Biesbosch"]
-    # val_sets_1 = [["rosbag2_2024_09_17-16_34_11", "rosbag2_2024_09_17-19_32_52", "rosbag2_2024_11_18-12_55_24"],
-    #             ["rosbag2_2024_09_17-15_33_18", "rosbag2_2024_09_17-15_37_39", "rosbag2_2024_09_17-15_40_51"],
-    #             ["rosbag2_2024_09_17-17_04_31"],
-    #             ["rosbag2_2024_09_17-17_13_13"],
-    #             ["rosbag2_2024_09_17-18_54_49"],
-    #             ["rosbag2_2024_09_17-14_40_19", "rosbag2_2024_09_17-14_48_48", "rosbag2_2024_09_17-14_58_53", "rosbag2_2024_09_17-20_27_46"]]
-    # test_folders_1 = ["rosbag2_2024_09_17-16_02_29", "rosbag2_2024_09_17-19_47_16"]
-    # val_sets_2 = [["rosbag2_2024_09_17-16_34_11", "rosbag2_2024_09_17-19_32_52", "rosbag2_2024_11_18-12_55_24"],
-    #             ["rosbag2_2024_09_17-15_33_18", "rosbag2_2024_09_17-15_37_39", "rosbag2_2024_09_17-15_40_51"],
-    #             ["rosbag2_2024_09_17-17_04_31"],
-    #             ["rosbag2_2024_09_17-17_13_13"],
-    #             ["rosbag2_2024_09_17-18_54_49"],
-    #             ["rosbag2_2024_09_17-16_02_29", "rosbag2_2024_09_17-19_47_16"]]
-    # test_folders_2 = ["rosbag2_2024_09_17-14_40_19", "rosbag2_2024_09_17-14_48_48", "rosbag2_2024_09_17-14_58_53", "rosbag2_2024_09_17-20_27_46"]
+    val_sets_4 = [["Waterbus dock Noordhoek"],
+                  ["Waterbus dock Noordeinde"],
+                  ["Waterbus dock Hooikade"]]
+    test_set_4 = ["Bunkerstation Dekker & Stam", "Private dock Middeldiep", "Veersteiger Boven Hardinxveld"]
 
 
 
 
 
-    data_version = 3
+    data_version = 4
     interval = 1
     min_label_size = 5
     distance_range = (0, 200)  # (0, 200) for all, (0, 100) for only the first two
@@ -211,25 +210,28 @@ if __name__ == "__main__":
         all_folders.update(folders)
     all_folders = sorted(all_folders)
 
-    if data_version == 1:
-        val_sets = val_sets_1
-        test_set = test_set_1
-    elif data_version == 2:
-        val_sets = val_sets_2
-        test_set = test_set_2
-    elif data_version == 3:
-        val_sets = val_sets_3
-        test_set = test_set_3
+    version_mapping = {
+        1: {"val_sets": val_sets_1, "test_set": test_set_1},
+        2: {"val_sets": val_sets_2, "test_set": test_set_2},
+        3: {"val_sets": val_sets_3, "test_set": test_set_3},
+        4: {"val_sets": val_sets_4, "test_set": test_set_4},
+    }
 
+    if data_version in version_mapping:
+        val_sets = version_mapping[data_version]["val_sets"]
+        test_set = version_mapping[data_version]["test_set"]
+    else:
+        raise ValueError(f"Unsupported data_version: {data_version}. Please update version_mapping.")
 
+    experiment_name = f"gen"
     version_name = ""
-    version_name += f"({data_version})" if data_version > 1 else ""
+    # version_name += f"({data_version})" if data_version > 1 else ""
     version_name += f"+interval-{interval}" if (interval and interval > 1) else ""
-    version_name += f"+label-{min_label_size}" if (min_label_size and min_label_size > 2) else ""
+    version_name += f"+label-{min_label_size}" if (min_label_size and min_label_size > 0) else ""
     version_name += f"+distance-({distance_range[0]}-{distance_range[1]})" if (distance_range and distance_range[1] > 0) else ""
 
 
-    data_config_csv = os.path.join(CONFIG_DIR, "version" + version_name + ".csv")
+    data_config_csv = os.path.join(CONFIG_DIR, experiment_name + version_name + ".csv")
     with open(data_config_csv, "w") as f:
         f.write("split,train, , val, , test, \n")
         f.write(" , docks, frames, docks, frames, docks, frames\n")
@@ -263,7 +265,7 @@ if __name__ == "__main__":
                 continue
 
             split_name = f"split-{i+1}"
-            config_name = split_name + version_name
+            config_name = experiment_name + '+' + split_name + version_name
 
             train_size, val_size, test_size = create_dataset_config(list(train_folders), list(val_folders), list(test_folders), config_name, interval=interval, distance_range=distance_range, min_label_size=min_label_size, image_size=image_size)
             f.write(f"{split_name}, \"{', '.join(train_docks_names)}\", {train_size}, \"{', '.join(val_docks)}\", {val_size}, \"{', '.join(test_set)}\", {test_size}\n")
