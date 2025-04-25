@@ -91,9 +91,9 @@ if __name__ == "__main__":
     data_name = "split-1(3)+interval-5+distance-(0-200)"                       # Must be a a dataset in the project_folder/dataset_configs folder
     epochs = 100
     patience = epochs // 2
-    batch_size = 1
+    batch_size = 8
     imgsz = 640
-    # train = True
+    train = True
     resume = True
     test = True
 
@@ -108,14 +108,14 @@ if __name__ == "__main__":
     # main(project_folder, run_name, patience, imgsz, train, resume, test)
     # exit()
 
-    # for i in range(4, 5):
+    # for i in range(1, 5):
     #     data_name = f"split-{i}(3)+label-5"
     #     print(f"\n--- Running {model} on {data_name} ---\n")
     #     run_name = f"m:{model}_e:{epochs}_b:{batch_size}_d:{data_name}"
     #     main(project_folder, run_name, patience, imgsz, train, resume, test)
     
     model = "YOLO11n"                                          # 'YOLO[version]' or 'Faster_RCNN'
-    for i in range(1, 5):
+    for i in range(2, 5):
         data_name = f"split-{i}(3)+label-5"
         print(f"\n--- Running {model} on {data_name} ---\n")
         run_name = f"m:{model}_e:{epochs}_b:{batch_size}_d:{data_name}"
