@@ -32,9 +32,9 @@ class YOLOTrainer:
             yolo.train(
                 data=os.path.join(self.data_config_folder, self.data_name, "dataset.yaml"),
                 epochs=self.epochs - last_epoch, resume=self.resume,
-                batch=self.batch_size, imgsz=self.imgsz, device=0,
+                batch=self.batch_size, imgsz=self.imgsz, device=[0, 1],
                 project=self.runs_dir, name=self.run_name, patience=self.patience,
-                verbose=True, half=True, max_det=100,
+                verbose=False, half=True, max_det=100,
             )
         except KeyboardInterrupt:
             print("\nTraining interrupted! Saving progress...")
